@@ -23,8 +23,8 @@ Nhân vật chính là **Pip**, chú robot nhỏ đội mũ bảo hiểm màu ca
 +----------------------------------------------------------------------+
 ```
 
-- Độ phân giải logic: `400 × 240 px` (25 × 15 tile, mỗi tile `16 × 16 px`), scale `Phaser.Scale.FIT` giữ nét pixel sắc cạnh.
-- Giao diện HUD cố định phía trên: điểm 6 chữ số, số Bolt Gem, số mạng, tên màn, đồng hồ đếm ngược (và thanh máu **Magma King** trong phòng boss 1-3).
+- Độ phân giải logic co giãn theo tỉ lệ màn hình: chiều cao cố định `240 px` (15 tile × `16 px`), chiều rộng tự tính từ `360` đến `560 px` (`400 × 240 px` trên tỉ lệ 5:3, `427 × 240 px` trên 16:9, `519–533 × 240 px` trên điện thoại 19.5:9) giúp đầy khung hình ngang mà không có viền đen.
+- Giao diện HUD cố định phía trên tự né vùng khuyết `safe-area-inset-*` (tai thỏ/Dynamic Island): điểm 6 chữ số, số Bolt Gem, số mạng, tên màn, đồng hồ đếm ngược (và thanh máu **Magma King** trong phòng boss 1-3).
 
 ---
 
@@ -41,12 +41,19 @@ npm install
 
 | Lệnh | Mô tả |
 | :--- | :--- |
-| `npm run dev` | Chạy song song Vite (`http://localhost:5173`) và Express server (`http://localhost:3000`), proxy `/api` |
-| `npm run build` | Build tuần tự `shared` -> `client` -> `server` |
+| `npm run dev` | Chạy song song Vite (`http://localhost:5173`, đã mở LAN `host: true`) và Express server (`http://localhost:3000`), proxy `/api` |
+| `npm run build` | Build tuần tự `shared` -> `client` -> `server` (tạo luôn PWA icons, `manifest.webmanifest`, `sw.js`) |
 | `npm start` | Chạy server production phục vụ `client/dist` và API trên cùng `PORT` (mặc định `3000`) |
 | `npm test` | Chạy toàn bộ unit & integration test bằng Vitest |
 | `npm run typecheck` | Kiểm tra TypeScript (`tsc --noEmit`) cho cả 3 workspace |
 | `npm run lint` | Kiểm tra ESLint (`no-explicit-any: error`) |
+
+### Kiểm thử trên điện thoại thật qua Wi-Fi / LAN
+
+1. Đảm bảo máy tính và điện thoại (iPhone / Android) dùng chung một mạng Wi-Fi.
+2. Chạy `npm run dev` ở thư mục gốc (`client/vite.config.ts` đã bật `host: true`, hoặc chạy riêng client bằng `npm run dev --workspace=client -- --host`).
+3. Xem địa chỉ LAN của máy tính (ví dụ `ipconfig` trên Windows để lấy IPv4 `192.168.x.x`), sau đó mở `http://<IP-máy-tính>:5173` trên Safari (iPhone) hoặc Chrome (Android).
+4. Trên iPhone Safari: bấm nút **Chia sẻ → Thêm vào Màn hình chính** để chơi ở chế độ PWA toàn màn hình ngang, không thanh địa chỉ và hỗ trợ chạy offline cho asset tĩnh.
 
 ### Chế độ Debug & Xem trước đồ họa
 
@@ -103,13 +110,13 @@ Bạn có thể thay thế bất kỳ sprite/tileset nào bằng file PNG tự v
 
 | Hành động | Bàn phím | Gamepad | Cảm ứng (Điện thoại) |
 | :--- | :--- | :--- | :--- |
-| Di chuyển trái / phải | `←` / `→` hoặc `A` / `D` | D-pad / Analog trái | Nút `<` / `>` góc dưới trái (hỗ trợ trượt ngón tay) |
-| Cúi / Chui ống | `↓` hoặc `S` | D-pad xuống / Analog xuống | Nút `v` phía trên D-pad |
-| Nhảy | `Space` / `W` / `↑` / `Z` | Nút `A` | Nút `JMP` góc dưới phải |
-| Chạy nhanh | Giữ `Shift` hoặc `K` | Nút `X` | Nút `RUN` góc dưới phải |
-| Bắn cầu lửa (khi có Flame Core) | `J` / `X` / nút Chạy | Nút `X` | Nút `RUN` |
-| Tạm dừng | `Esc` hoặc `P` | Nút `Start` | Nút `\|\|` góc trên phải |
-| Tắt / Bật âm thanh nhanh | `M` | — | Chỉnh trong Settings |
+| Di chuyển trái / phải | `←` / `→` hoặc `A` / `D` | D-pad / Analog trái | Cụm `◀` / `▶` HTML góc dưới trái (trượt ngón chuyển hướng mượt) hoặc **Joystick ảo** |
+| Cúi / Chui ống | `↓` hoặc `S` | D-pad xuống / Analog xuống | Vuốt xuống trên cụm di chuyển `◀` / `▶` |
+| Nhảy | `Space` / `W` / `↑` / `Z` | Nút `A` | Nút `NHẢY` (`80 CSS px` mặc định) góc dưới phải — giữ để nhảy cao |
+| Chạy nhanh | Giữ `Shift` hoặc `K` | Nút `X` | Nút `CHẠY` (`64 CSS px`, hỗ trợ trượt ngón nối giữa `CHẠY` ↔ `NHẢY`, hoặc bật **Luôn chạy** trong Settings) |
+| Bắn cầu lửa (khi có Flame Core) | `J` / `X` / nút Chạy | Nút `X` | Nút `CHẠY` (hoặc `BẮN` khi bật Luôn chạy) |
+| Tạm dừng | `Esc` hoặc `P` | Nút `Start` | Nút `\|\|` (`40 CSS px`) góc trên phải (hiện trong lúc chơi) |
+| Tắt / Bật âm thanh & Tuỳ chỉnh mobile | `M` | — | Vào **CÀI ĐẶT** chỉnh kích thước/độ mờ nút, đổi tay trái, Joystick, kéo-thả vị trí nút, rung và chất lượng hiệu ứng |
 
 ---
 
@@ -130,7 +137,8 @@ Bạn có thể thay thế bất kỳ sprite/tileset nào bằng file PNG tự v
 ## Tinh chỉnh cảm giác điều khiển (`client/src/config.ts`)
 
 Mọi thông số vật lý và gameplay đều tập trung tại `client/src/config.ts`:
-- `PHYSICS_CONFIG`: `GRAVITY` (1400), `WALK_MAX_SPEED` (100), `RUN_MAX_SPEED` (170), `GROUND_ACCEL` (500), `SKID_DECEL` (1000), `JUMP_VELOCITY` (-400), `RUN_JUMP_VELOCITY` (-440), `JUMP_CUT_MULT` (0.45), `COYOTE_TIME_MS` (100), `JUMP_BUFFER_MS` (100), `CORNER_CORRECTION_PX` (4), `PREVENT_BACKTRACK` (true).
+- Bước logic cố định: `FIXED_STEP_HZ = 60` (`FIXED_DT_MS = 1000 / 60`).
+- `PHYSICS_CONFIG`: `JUMP_VELOCITY` (-400), `RUN_JUMP_VELOCITY` (-430 khi `|vx| > 140`), `GRAVITY_RISE_HOLD` (1100), `GRAVITY_RISE_RELEASE` (3200), `GRAVITY_FALL` (1700), `APEX_GRAVITY_MULT` (0.6 khi `|vy| < 40` và đang giữ nhảy), `MAX_FALL_SPEED` (480, chỉ kẹp chiều rơi xuống), `MIN_JUMP_TIME_MS` (50), `COYOTE_TIME_MS` (110), `JUMP_BUFFER_MS` (130), `STOMP_BOUNCE` (-300) / `STOMP_BOUNCE_HOLD` (-430), `WALK_MAX_SPEED` (110), `RUN_MAX_SPEED` (210), `CORNER_CORRECTION_PX` (4), `PREVENT_BACKTRACK` (true).
 - `GAMEPLAY_CONFIG`: `FIREBALL_SPEED`, `ENEMY_SPEED`, `SHELL_SLIDE_SPEED`, `STOMP_COMBO`, `PLATFORM_RANGE_PX`, `FIREBAR_DEG_PER_SEC`.
 
 ---
@@ -173,7 +181,15 @@ Giới hạn tần suất (Rate Limit): tối đa **5 POST / phút / IP** và **
    - Kết hợp kiểm tra công thức phụ thuộc số gem/kills thực tế để chặn gửi điểm giả mạo nhưng vẫn thoải mái cho người chơi đạt combo cao.
 5. **Phòng bonus `1-2-bonus`**: Lưu vị trí quay lại (`returnX`, `returnY`) và `timeRemaining` vào `GameSession` khi Pip nhấn `↓` trên ống `p` ở `1-2`, trả Pip ra tại ống thoát ở cột 127 khi đi qua ống `p` trong phòng bonus.
 6. **Tách `powerState.ts` và `tileIndex.ts`**: Tách logic thuần không phụ thuộc Phaser DOM để chạy Vitest nhanh gọn trong môi trường Node.
-7. **Tinh chỉnh độ cao nhảy trong `config.ts`**: Với `GRAVITY = 1400`, giá trị khởi điểm `JUMP_VELOCITY = -400` chỉ nhảy cao ~`57px` (`3.57` ô), không đủ qua ống cao 4 ô hoặc nhảy lên hàng gạch cao 4 ô khi đứng tại chỗ. Đã tinh chỉnh `JUMP_VELOCITY = -445` (~`4.42` ô) và `RUN_JUMP_VELOCITY = -485` (~`5.25` ô), đồng thời thêm bậc đá phụ ở màn `1-2` (cột 35–37) để lên đường tắt trần dễ dàng hơn.
+7. **Vật lý nhảy trọng lực bất đối xứng & bước cố định 60Hz (`stepPlayerVertical` trong `client/src/entities/jumpPhysics.ts`)**:
+   - Thay hoàn toàn cơ chế cắt nhảy `vy *= 0.45` phụ thuộc FPS (từng làm máy 120Hz nhảy thấp hơn) và bỏ `setMaxVelocityY` hai chiều vốn kẹp nhầm vận tốc đi lên. Chuyển toàn bộ logic gameplay + `this.physics.disableUpdate()` + `world.singleStep()` sang accumulator 60Hz cố định; tách `stepPlayerVertical` thuần để `validator.ts` (`computeJumpMetrics()`) và Vitest dùng chung một nguồn chân lý.
+   - Tinh chỉnh `GRAVITY_RISE_RELEASE = 3200` và `MIN_JUMP_TIME_MS = 50` (thay vì `2400` / `80`) với `GRAVITY_RISE_HOLD = 1100`, `APEX_GRAVITY_MULT = 0.6`, `GRAVITY_FALL = 1700`: giữ nút khi đứng yên/đi bộ đạt ~`4.4` ô, đang chạy (`|vx| > 140`) đạt ~`5.2` ô, còn nhấp nhẹ 1 nhịp đạt ~`2.1` ô (`<= 2.5` ô) mượt mà không bị giật.
+8. **Nút cảm ứng HTML Overlay (`HtmlTouchControls.ts`) & đa chạm theo `pointerId`**:
+   - Chuyển nút cảm ứng từ Phaser canvas sang DOM overlay tính theo **CSS pixel** (`64px` di chuyển, `80px` Nhảy, `64px` Chạy/Bắn, `40px` Tạm dừng + `+12px` hitbox padding) để kích thước vật lý ổn định trên mọi mật độ DPI và đọc thẳng `env(safe-area-inset-*)`.
+   - `TouchPointerTracker` + `setPointerCapture` giữ nguyên trạng thái khi `pointerout`, chỉ nhả ở `pointerup`/`pointercancel` của đúng `pointerId`, hỗ trợ trượt `◀`/`▶`, vuốt xuống để cúi, trượt giữa `CHẠY` ↔ `NHẢY`, Joystick ảo, `Luôn chạy`, tay trái và trình kéo-thả tuỳ chỉnh vị trí.
+9. **Responsive Landscape (`viewport.ts`), PWA & Vòng đời Mobile (`MobileRuntime.ts`)**:
+   - Giữ chiều cao logic `240`, co giãn chiều rộng `360..560` theo tỉ lệ viewport thực để xoá viền đen trên màn hình `16:9` / `19.5:9`; chặn zoom, pull-to-refresh, double-tap và context menu; hiện overlay hướng dẫn xoay ngang ở portrait và màn hình `Tiếp tục` khi quay lại ngang.
+   - Đóng gói PWA (`vite-plugin-pwa` + icon PNG `192/512` + CSP `worker-src`/`manifest-src 'self'`), tự động khôi phục Web Audio từ cả trạng thái `'suspended'` và `'interrupted'` trên iOS Safari, và tự hạ `effectQuality` từ `'auto'` sang `'low'` nếu FPS trung bình dưới `50` trong 3 giây liên tục.
 
 ---
 

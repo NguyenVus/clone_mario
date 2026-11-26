@@ -1,26 +1,12 @@
 import Phaser from 'phaser';
+import {
+  InputEdgeTracker,
+  TouchPointerTracker,
+  type InputState,
+  type TouchAction,
+} from './inputLogic';
 
-export interface InputState {
-  left: boolean;
-  right: boolean;
-  down: boolean;
-  jump: boolean;
-  jumpPressed: boolean;
-  run: boolean;
-  fire: boolean;
-  firePressed: boolean;
-  pausePressed: boolean;
-  mutePressed: boolean;
-}
-
-export interface TouchInputState {
-  left: boolean;
-  right: boolean;
-  down: boolean;
-  jump: boolean;
-  runFire: boolean;
-  pausePressed: boolean;
-}
+export type { InputState, TouchAction };
 
 export class InputManager {
   private keys: {
@@ -43,20 +29,9 @@ export class InputManager {
     m: Phaser.Input.Keyboard.Key;
   } | null = null;
 
-  private touchState: TouchInputState = {
-    left: false,
-    right: false,
-    down: false,
-    jump: false,
-    runFire: false,
-    pausePressed: false,
-  };
-
-  private prevJump = false;
-  private prevFire = false;
-  private prevPause = false;
-  private prevMute = false;
-  private locked = false;
+  public readonly touchTracker = new TouchPointerTracker();
+  private readonly edgeTracker = new InputEdgeTracker();
+  private lastState: InputState;
 
   constructor(private readonly scene: Phaser.Scene) {
     const kb = scene.input.keyboard;
@@ -81,42 +56,41 @@ export class InputManager {
         m: kb.addKey(Phaser.Input.Keyboard.KeyCodes.M),
       };
     }
+
+    this.lastState = this.edgeTracker.step({
+      left: false,
+      right: false,
+      down: false,
+      jump: false,
+      run: false,
+      fire: false,
+      pause: false,
+      mute: false,
+    });
   }
 
   public setLocked(locked: boolean): void {
-    this.locked = locked;
-  }
-
-  public setTouchState(partial: Partial<TouchInputState>): void {
-    Object.assign(this.touchState, partial);
-  }
-
-  public consumeTouchPause(): void {
-    this.touchState.pausePressed = false;
-  }
-
-  public poll(): InputState {
-    if (this.locked) {
-      this.prevJump = false;
-      this.prevFire = false;
-      this.prevPause = false;
-      this.prevMute = false;
-      return {
-        left: false,
-        right: false,
-        down: false,
-        jump: false,
-        jumpPressed: false,
-        run: false,
-        fire: false,
-        firePressed: false,
-        pausePressed: false,
-        mutePressed: false,
-      };
+    this.edgeTracker.setLocked(locked);
+    if (locked) {
+      this.touchTracker.clearAll();
     }
+  }
 
+  public triggerPausePulse(): void {
+    this.edgeTracker.triggerPausePulse();
+  }
+
+  public getLastState(): InputState {
+    return this.lastState;
+  }
+
+  /**
+   * Must be called ONCE at the beginning of each fixed 60Hz logic step.
+   */
+  public poll(): InputState {
     const k = this.keys;
     const pad = this.scene.input.gamepad?.getPad(0);
+    const touch = this.touchTracker.getSnapshot();
 
     const padLeft = Boolean(pad && (pad.left || (pad.leftStick?.x ?? 0) < -0.35));
     const padRight = Boolean(pad && (pad.right || (pad.leftStick?.x ?? 0) > 0.35));
@@ -125,39 +99,27 @@ export class InputManager {
     const padRunFire = Boolean(pad && pad.X);
     const padStart = Boolean(pad && pad.buttons[9]?.pressed);
 
-    const left = Boolean(k?.left.isDown || k?.a.isDown || padLeft || this.touchState.left);
-    const right = Boolean(k?.right.isDown || k?.d.isDown || padRight || this.touchState.right);
-    const down = Boolean(k?.down.isDown || k?.s.isDown || padDown || this.touchState.down);
+    const left = Boolean(k?.left.isDown || k?.a.isDown || padLeft || touch.left);
+    const right = Boolean(k?.right.isDown || k?.d.isDown || padRight || touch.right);
+    const down = Boolean(k?.down.isDown || k?.s.isDown || padDown || touch.down);
     const jump = Boolean(
-      k?.space.isDown || k?.w.isDown || k?.up.isDown || k?.z.isDown || padJump || this.touchState.jump,
+      k?.space.isDown || k?.w.isDown || k?.up.isDown || k?.z.isDown || padJump || touch.jump,
     );
-    const run = Boolean(k?.shift.isDown || k?.k.isDown || padRunFire || this.touchState.runFire);
-    const fire = Boolean(k?.j.isDown || k?.x.isDown || run);
-    const pauseDown = Boolean(k?.esc.isDown || k?.p.isDown || padStart || this.touchState.pausePressed);
-    const muteDown = Boolean(k?.m.isDown);
+    const run = Boolean(k?.shift.isDown || k?.k.isDown || padRunFire || touch.run);
+    const fire = Boolean(k?.j.isDown || k?.x.isDown || run || touch.fire);
+    const pause = Boolean(k?.esc.isDown || k?.p.isDown || padStart || touch.pause);
+    const mute = Boolean(k?.m.isDown);
 
-    const jumpPressed = jump && !this.prevJump;
-    const firePressed = fire && !this.prevFire;
-    const pausePressed = pauseDown && !this.prevPause;
-    const mutePressed = muteDown && !this.prevMute;
-
-    this.prevJump = jump;
-    this.prevFire = fire;
-    this.prevPause = pauseDown;
-    this.prevMute = muteDown;
-    this.touchState.pausePressed = false;
-
-    return {
-      left: left && !right,
-      right: right && !left,
+    this.lastState = this.edgeTracker.step({
+      left,
+      right,
       down,
       jump,
-      jumpPressed,
       run,
       fire,
-      firePressed,
-      pausePressed,
-      mutePressed,
-    };
+      pause,
+      mute,
+    });
+    return this.lastState;
   }
 }

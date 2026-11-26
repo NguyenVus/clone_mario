@@ -1,8 +1,8 @@
 import Phaser from 'phaser';
 import { music } from '../audio/Music';
 import { synth } from '../audio/Synth';
-import { GAME_HEIGHT, GAME_WIDTH } from '../config';
 import { getSession } from '../systems/GameSession';
+import { MobileRuntime } from '../systems/MobileRuntime';
 import { PixelButton } from '../ui/Button';
 
 export class PauseScene extends Phaser.Scene {
@@ -11,9 +11,14 @@ export class PauseScene extends Phaser.Scene {
   }
 
   create(): void {
-    this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x000000, 0.65);
+    const w = this.scale.width;
+    const h = this.scale.height;
+    MobileRuntime.get().getTouchControls()?.setGameplayVisible(false);
+
+    this.add.rectangle(w / 2, h / 2, w, h, 0x000000, 0.65);
+    this.add.nineslice(w / 2, h / 2, 'ui-panel-9', 0, 210, 152, 8, 8, 8, 8);
     this.add
-      .bitmapText(GAME_WIDTH / 2, 54, 'pixel-font', 'PAUSED', 14)
+      .bitmapText(w / 2, 58, 'pixel-font', 'PAUSED', 12)
       .setOrigin(0.5)
       .setTint(0xffe030);
 
@@ -21,23 +26,24 @@ export class PauseScene extends Phaser.Scene {
       synth.pause();
       music.resume();
       this.scene.resume('GameScene');
+      MobileRuntime.get().getTouchControls()?.setGameplayVisible(true);
       this.scene.stop();
     };
 
     new PixelButton(this, {
-      x: GAME_WIDTH / 2,
-      y: 98,
-      width: 160,
-      height: 22,
+      x: w / 2,
+      y: 96,
+      width: 170,
+      height: 24,
       label: 'TIẾP TỤC',
       onClick: resumeGame,
     });
 
     new PixelButton(this, {
-      x: GAME_WIDTH / 2,
+      x: w / 2,
       y: 128,
-      width: 160,
-      height: 22,
+      width: 170,
+      height: 24,
       label: 'CHƠI LẠI MÀN',
       onClick: () => {
         const session = getSession();
@@ -51,10 +57,10 @@ export class PauseScene extends Phaser.Scene {
     });
 
     new PixelButton(this, {
-      x: GAME_WIDTH / 2,
-      y: 158,
-      width: 160,
-      height: 22,
+      x: w / 2,
+      y: 160,
+      width: 170,
+      height: 24,
       label: 'VỀ MENU',
       onClick: () => {
         music.stop();

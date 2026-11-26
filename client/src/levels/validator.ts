@@ -1,3 +1,4 @@
+import { computeJumpMetrics } from '../entities/jumpPhysics';
 import type { LevelSource } from './legend';
 import { parseLevel } from './parser';
 
@@ -16,13 +17,16 @@ export function validateLevelReachability(source: LevelSource): ValidationResult
   const H = data.heightTiles;
   const W = data.widthTiles;
 
+  const metrics = computeJumpMetrics();
+  const maxJumpH = metrics.maxReachHeightTiles;
+  const maxJumpDx = Math.max(metrics.maxWalkGapTiles, metrics.maxRunGapTiles);
+
   // Build platform support map (moving platforms bridge up to 4 horizontal or 4 vertical tiles)
   const platformStandable = new Set<number>();
   const key = (c: number, r: number): number => r * W + c;
 
   for (const p of data.platforms) {
     if (p.axis === 'horizontal') {
-      // Platform is 3 tiles wide and sweeps +-2..+4 tiles horizontally
       for (let dc = -2; dc <= 5; dc++) {
         const c = p.col + dc;
         if (c >= 0 && c < W && p.row - 1 >= 0) {
@@ -30,7 +34,6 @@ export function validateLevelReachability(source: LevelSource): ValidationResult
         }
       }
     } else {
-      // Vertical platform sweeps +-2..4 tiles vertically
       for (let dr = -3; dr <= 3; dr++) {
         for (let dc = 0; dc < 3; dc++) {
           const c = p.col + dc;
@@ -67,7 +70,6 @@ export function validateLevelReachability(source: LevelSource): ValidationResult
 
   const targets = new Set<number>();
   if (data.flagpole) {
-    // Allow touching any column adjacent or at flagpole base up to 8 tiles high
     for (let dr = 0; dr <= 8; dr++) {
       const r = data.flagpole.row - dr;
       if (r >= 0) targets.add(key(data.flagpole.col, r));
@@ -83,7 +85,6 @@ export function validateLevelReachability(source: LevelSource): ValidationResult
     }
   }
 
-  // Drop spawn down to first standable tile if spawn is 1 tile above ground
   let startC = data.spawn.col;
   let startR = data.spawn.row;
   while (startR + 1 < H && !canStandAt(startC, startR) && isPassable(startC, startR + 1)) {
@@ -109,7 +110,6 @@ export function validateLevelReachability(source: LevelSource): ValidationResult
       return { valid: true };
     }
 
-    // Check if adjacent to target while falling/passing
     for (let dc = -1; dc <= 1; dc++) {
       for (let dr = -1; dr <= 1; dr++) {
         if (targets.has(key(c + dc, r + dr))) {
@@ -118,7 +118,6 @@ export function validateLevelReachability(source: LevelSource): ValidationResult
       }
     }
 
-    // 1. Walk left/right or step down off a ledge
     for (const dir of [-1, 1]) {
       const nc = c + dir;
       if (nc < 0 || nc >= W) continue;
@@ -126,7 +125,6 @@ export function validateLevelReachability(source: LevelSource): ValidationResult
         if (canStandAt(nc, r)) {
           enqueue(nc, r);
         } else {
-          // Fall down to nearest standable tile below
           let fallR = r + 1;
           while (fallR < H && isPassable(nc, fallR)) {
             if (targets.has(key(nc, fallR))) return { valid: true };
@@ -140,16 +138,13 @@ export function validateLevelReachability(source: LevelSource): ValidationResult
       }
     }
 
-    // 2. Jump arcs: up to 5 tiles horizontally (running), 4 tiles high
-    for (let dx = -5; dx <= 5; dx++) {
+    for (let dx = -maxJumpDx; dx <= maxJumpDx; dx++) {
       const targetC = c + dx;
       if (targetC < 0 || targetC >= W) continue;
 
-      // Check vertical headroom at takeoff (at least 1 tile up if jumping)
-      for (let peakUp = 1; peakUp <= 4; peakUp++) {
+      for (let peakUp = 1; peakUp <= maxJumpH; peakUp++) {
         const apexR = r - peakUp;
         if (apexR < 0) continue;
-        // Verify clear path straight up or slanted near takeoff
         let ceilingClear = true;
         for (let step = 1; step <= peakUp; step++) {
           if (isSolid(c, r - step)) {
@@ -159,8 +154,6 @@ export function validateLevelReachability(source: LevelSource): ValidationResult
         }
         if (!ceilingClear) break;
 
-        // From apexR, descend to any standable tile at targetC
-        // Midpoint clearance check for wide jumps
         if (Math.abs(dx) >= 3) {
           const midC = c + Math.trunc(dx / 2);
           if (isSolid(midC, apexR) && isSolid(midC, Math.min(H - 1, apexR + 1))) {

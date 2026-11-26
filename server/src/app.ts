@@ -28,6 +28,8 @@ export function createApp(options: AppOptions = {}): express.Express {
           imgSrc: ["'self'", 'data:', 'blob:'],
           connectSrc: ["'self'"],
           mediaSrc: ["'self'", 'blob:'],
+          workerSrc: ["'self'"],
+          manifestSrc: ["'self'"],
         },
       },
     }),

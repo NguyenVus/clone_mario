@@ -2,8 +2,9 @@ import Phaser from 'phaser';
 import { music } from '../audio/Music';
 import { synth } from '../audio/Synth';
 import { AUTOTILE_BASE, DIR_E, DIR_S, DIR_W, MASK_TO_47_INDEX } from '../art/autotile';
-import { GAME_HEIGHT, GAME_WIDTH, TILE_SIZE } from '../config';
+import { GAME_HEIGHT, TILE_SIZE } from '../config';
 import { getSession } from '../systems/GameSession';
+import { MobileRuntime } from '../systems/MobileRuntime';
 import { PixelButton } from '../ui/Button';
 
 export class MenuScene extends Phaser.Scene {
@@ -17,7 +18,7 @@ export class MenuScene extends Phaser.Scene {
   private hills!: Phaser.GameObjects.TileSprite;
   private mountains!: Phaser.GameObjects.TileSprite;
   private logo!: Phaser.GameObjects.Image;
-  private logoBaseY = 34;
+  private logoBaseY = 30;
   private logoSheen!: Phaser.GameObjects.Rectangle;
   private audioPrompt!: Phaser.GameObjects.Text;
   private audioUnlocked = false;
@@ -30,51 +31,49 @@ export class MenuScene extends Phaser.Scene {
     this.buttons = [];
     this.bgTiles = [];
     this.selectedIndex = 0;
-    this.cameras.main.fadeIn(300, 0, 0, 0);
+    this.cameras.main.fadeIn(250, 0, 0, 0);
+    MobileRuntime.get().getTouchControls()?.setGameplayVisible(false);
 
+    const w = this.scale.width;
+    const h = this.scale.height;
     const isTouch = Boolean(this.registry.get('isTouchDevice'));
     const session = getSession(isTouch);
     session.refreshSave();
 
-    // Multi-layer parallax sky, mountains, hills, clouds
-    this.add.tileSprite(0, 0, GAME_WIDTH, GAME_HEIGHT, 'bg-grass-sky').setOrigin(0, 0).setDepth(0);
+    this.add.tileSprite(0, 0, w, h, 'bg-grass-sky').setOrigin(0, 0).setDepth(0);
     this.mountains = this.add
-      .tileSprite(0, GAME_HEIGHT - 138, GAME_WIDTH, 120, 'bg-grass-mountains')
+      .tileSprite(0, h - 138, w, 120, 'bg-grass-mountains')
       .setOrigin(0, 0)
       .setDepth(1);
     this.hills = this.add
-      .tileSprite(0, GAME_HEIGHT - 102, GAME_WIDTH, 80, 'bg-grass-hills')
+      .tileSprite(0, h - 102, w, 80, 'bg-grass-hills')
       .setOrigin(0, 0)
       .setDepth(2);
     this.clouds = this.add
-      .tileSprite(0, 12, GAME_WIDTH, 64, 'bg-grass-clouds')
+      .tileSprite(0, 12, w, 64, 'bg-grass-clouds')
       .setOrigin(0, 0)
       .setDepth(3);
 
-    // Scrolling autotiled grass ground strip
     const topTile = AUTOTILE_BASE.grass + (MASK_TO_47_INDEX.get(DIR_E | DIR_S | DIR_W) ?? 0);
     const fillTile = AUTOTILE_BASE.grass + 46;
-    const cols = Math.ceil(GAME_WIDTH / TILE_SIZE) + 2;
+    const cols = Math.ceil(w / TILE_SIZE) + 2;
     for (let c = 0; c < cols; c++) {
       const top = this.add.image(c * TILE_SIZE, 208, 'tileset', topTile).setOrigin(0, 0).setDepth(4);
       const fill = this.add.image(c * TILE_SIZE, 224, 'tileset', fillTile).setOrigin(0, 0).setDepth(4);
       this.bgTiles.push(top, fill);
     }
 
-    // Demo Pip running
     this.demoPipY = 208;
     this.demoVy = 0;
-    this.demoPip = this.add.sprite(60, this.demoPipY, 'pip-small', 0).setOrigin(0.5, 1).setDepth(6);
+    this.demoPip = this.add.sprite(56, this.demoPipY, 'pip-small', 0).setOrigin(0.5, 1).setDepth(6);
     this.demoPip.play('pip-small-walk');
 
-    // 9-slice menu panel
-    this.add.nineslice(GAME_WIDTH / 2, 134, 'ui-panel-9', 0, 198, 132, 8, 8, 8, 8).setDepth(7);
+    this.add.nineslice(w / 2, 134, 'ui-panel-9', 0, 204, 138, 8, 8, 8, 8).setDepth(7);
 
-    // Chunky 3-color gradient logo + bob + 3s sheen sweep
-    this.logoBaseY = 34;
-    this.logo = this.add.image(GAME_WIDTH / 2, this.logoBaseY, 'logo-pixel-hero').setDepth(8);
+    this.logoBaseY = 30;
+    this.logo = this.add.image(w / 2, this.logoBaseY, 'logo-pixel-hero').setDepth(8);
     this.logoSheen = this.add
-      .rectangle(GAME_WIDTH / 2 - 120, this.logoBaseY, 12, 34, 0xffffff, 0.55)
+      .rectangle(w / 2 - 120, this.logoBaseY, 12, 34, 0xffffff, 0.55)
       .setAngle(22)
       .setBlendMode(Phaser.BlendModes.ADD)
       .setDepth(9)
@@ -85,10 +84,11 @@ export class MenuScene extends Phaser.Scene {
       loop: true,
       callback: () => {
         if (!this.scene.isActive('MenuScene')) return;
-        this.logoSheen.setVisible(true).setPosition(GAME_WIDTH / 2 - 110, this.logo.y);
+        const cw = this.scale.width;
+        this.logoSheen.setVisible(true).setPosition(cw / 2 - 110, this.logo.y);
         this.tweens.add({
           targets: this.logoSheen,
-          x: GAME_WIDTH / 2 + 110,
+          x: cw / 2 + 110,
           duration: 420,
           ease: 'Quad.easeInOut',
           onComplete: () => this.logoSheen.setVisible(false),
@@ -98,8 +98,8 @@ export class MenuScene extends Phaser.Scene {
 
     this.add
       .bitmapText(
-        GAME_WIDTH / 2,
-        59,
+        w / 2,
+        54,
         'pixel-font',
         `HIGH SCORE ${String(session.saveData.highScore).padStart(6, '0')}`,
         8,
@@ -108,8 +108,8 @@ export class MenuScene extends Phaser.Scene {
       .setTint(0xfff8a0)
       .setDepth(8);
 
-    const startY = 86;
-    const stepY = 25;
+    const startY = 82;
+    const stepY = 28;
     const entries: Array<{ label: string; action: () => void }> = [
       {
         label: 'CHƠI MỚI',
@@ -144,10 +144,10 @@ export class MenuScene extends Phaser.Scene {
 
     entries.forEach((entry, idx) => {
       const btn = new PixelButton(this, {
-        x: GAME_WIDTH / 2,
+        x: w / 2,
         y: startY + idx * stepY,
-        width: 164,
-        height: 20,
+        width: 176,
+        height: 24,
         label: entry.label,
         onClick: entry.action,
       });
@@ -157,7 +157,7 @@ export class MenuScene extends Phaser.Scene {
     this.selectButton(0);
 
     this.audioPrompt = this.add
-      .text(GAME_WIDTH / 2, GAME_HEIGHT - 12, 'Nhấn để bắt đầu / mở khóa âm thanh', {
+      .text(w / 2, GAME_HEIGHT - 12, 'Chạm để bắt đầu / mở khóa âm thanh', {
         fontFamily: 'monospace',
         fontSize: '9px',
         color: '#ffe030',
@@ -180,6 +180,16 @@ export class MenuScene extends Phaser.Scene {
     this.input.keyboard?.on('keydown-S', () => this.moveSelection(1));
     this.input.keyboard?.on('keydown-ENTER', () => this.buttons[this.selectedIndex]?.trigger());
     this.input.keyboard?.on('keydown-SPACE', () => this.buttons[this.selectedIndex]?.trigger());
+
+    const onResize = (): void => {
+      if (this.scene.isActive('MenuScene')) {
+        this.scene.restart();
+      }
+    };
+    this.scale.on('resize', onResize);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.scale.off('resize', onResize);
+    });
   }
 
   private unlockAudio(): void {
@@ -207,7 +217,7 @@ export class MenuScene extends Phaser.Scene {
   }
 
   private transitionTo(sceneKey: string, data?: Record<string, unknown>): void {
-    this.cameras.main.fadeOut(300, 0, 0, 0);
+    this.cameras.main.fadeOut(250, 0, 0, 0);
     this.cameras.main.once('camerafadeoutcomplete', () => {
       this.scene.start(sceneKey, data);
     });
@@ -215,17 +225,17 @@ export class MenuScene extends Phaser.Scene {
 
   override update(time: number, delta: number): void {
     const dt = delta / 1000;
+    const w = this.scale.width;
     this.mountains.tilePositionX += 8 * dt;
     this.hills.tilePositionX += 22 * dt;
     this.clouds.tilePositionX += 14 * dt;
 
-    // Gentle logo bobbing
     this.logo.y = Math.round(this.logoBaseY + Math.sin(time * 0.004) * 2.5);
 
     for (const t of this.bgTiles) {
       t.x -= 48 * dt;
       if (t.x <= -TILE_SIZE) {
-        t.x += (Math.ceil(GAME_WIDTH / TILE_SIZE) + 2) * TILE_SIZE;
+        t.x += (Math.ceil(w / TILE_SIZE) + 2) * TILE_SIZE;
       }
     }
 

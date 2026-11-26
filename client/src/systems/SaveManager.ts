@@ -1,9 +1,28 @@
+export type TouchSizePreset = 'small' | 'medium' | 'large';
+export type TouchMoveMode = 'buttons' | 'joystick';
+export type EffectQualityMode = 'auto' | 'high' | 'low';
+
+export interface CustomTouchLayout {
+  leftPad?: { x: number; y: number };
+  jumpBtn?: { x: number; y: number };
+  runBtn?: { x: number; y: number };
+  pauseBtn?: { x: number; y: number };
+}
+
 export interface GameSettings {
   sfx: number;
   music: number;
   touch: boolean;
   shake: boolean;
   highEffects: boolean;
+  effectQuality: EffectQualityMode;
+  touchSize: TouchSizePreset;
+  touchAlpha: number; // 20..80
+  touchLeftHanded: boolean;
+  touchMoveMode: TouchMoveMode;
+  alwaysRun: boolean;
+  vibrate: boolean;
+  customTouchLayout?: CustomTouchLayout;
 }
 
 export interface SaveDataV1 {
@@ -27,14 +46,50 @@ export function createDefaultSaveData(defaultTouch = false): SaveDataV1 {
       touch: defaultTouch,
       shake: true,
       highEffects: true,
+      effectQuality: 'auto',
+      touchSize: 'medium',
+      touchAlpha: 50,
+      touchLeftHanded: false,
+      touchMoveMode: 'buttons',
+      alwaysRun: false,
+      vibrate: true,
     },
     playerName: '',
   };
 }
 
-function clampVolume(v: unknown, fallback: number): number {
+function clampInt(v: unknown, min: number, max: number, fallback: number): number {
   if (typeof v !== 'number' || Number.isNaN(v)) return fallback;
-  return Math.max(0, Math.min(100, Math.round(v)));
+  return Math.max(min, Math.min(max, Math.round(v)));
+}
+
+function sanitizePoint(raw: unknown): { x: number; y: number } | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined;
+  const obj = raw as Record<string, unknown>;
+  if (
+    typeof obj.x === 'number' &&
+    Number.isFinite(obj.x) &&
+    typeof obj.y === 'number' &&
+    Number.isFinite(obj.y)
+  ) {
+    return { x: Math.round(obj.x), y: Math.round(obj.y) };
+  }
+  return undefined;
+}
+
+function sanitizeCustomLayout(raw: unknown): CustomTouchLayout | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined;
+  const obj = raw as Record<string, unknown>;
+  const out: CustomTouchLayout = {};
+  const lp = sanitizePoint(obj.leftPad);
+  const jb = sanitizePoint(obj.jumpBtn);
+  const rb = sanitizePoint(obj.runBtn);
+  const pb = sanitizePoint(obj.pauseBtn);
+  if (lp) out.leftPad = lp;
+  if (jb) out.jumpBtn = jb;
+  if (rb) out.runBtn = rb;
+  if (pb) out.pauseBtn = pb;
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 export function sanitizeSaveData(raw: unknown, defaultTouch = false): SaveDataV1 {
@@ -59,15 +114,48 @@ export function sanitizeSaveData(raw: unknown, defaultTouch = false): SaveDataV1
       ? (obj.settings as Record<string, unknown>)
       : {};
 
+  const effectQuality: EffectQualityMode =
+    rawSettings.effectQuality === 'high' ||
+    rawSettings.effectQuality === 'low' ||
+    rawSettings.effectQuality === 'auto'
+      ? rawSettings.effectQuality
+      : rawSettings.highEffects === false
+        ? 'low'
+        : def.settings.effectQuality;
+
+  const touchSize: TouchSizePreset =
+    rawSettings.touchSize === 'small' ||
+    rawSettings.touchSize === 'medium' ||
+    rawSettings.touchSize === 'large'
+      ? rawSettings.touchSize
+      : def.settings.touchSize;
+
+  const touchMoveMode: TouchMoveMode =
+    rawSettings.touchMoveMode === 'joystick' || rawSettings.touchMoveMode === 'buttons'
+      ? rawSettings.touchMoveMode
+      : def.settings.touchMoveMode;
+
   const settings: GameSettings = {
-    sfx: clampVolume(rawSettings.sfx, def.settings.sfx),
-    music: clampVolume(rawSettings.music, def.settings.music),
+    sfx: clampInt(rawSettings.sfx, 0, 100, def.settings.sfx),
+    music: clampInt(rawSettings.music, 0, 100, def.settings.music),
     touch: typeof rawSettings.touch === 'boolean' ? rawSettings.touch : def.settings.touch,
     shake: typeof rawSettings.shake === 'boolean' ? rawSettings.shake : def.settings.shake,
-    highEffects:
-      typeof rawSettings.highEffects === 'boolean'
-        ? rawSettings.highEffects
-        : def.settings.highEffects,
+    highEffects: effectQuality !== 'low',
+    effectQuality,
+    touchSize,
+    touchAlpha: clampInt(rawSettings.touchAlpha, 20, 80, def.settings.touchAlpha),
+    touchLeftHanded:
+      typeof rawSettings.touchLeftHanded === 'boolean'
+        ? rawSettings.touchLeftHanded
+        : def.settings.touchLeftHanded,
+    touchMoveMode,
+    alwaysRun:
+      typeof rawSettings.alwaysRun === 'boolean'
+        ? rawSettings.alwaysRun
+        : def.settings.alwaysRun,
+    vibrate:
+      typeof rawSettings.vibrate === 'boolean' ? rawSettings.vibrate : def.settings.vibrate,
+    customTouchLayout: sanitizeCustomLayout(rawSettings.customTouchLayout),
   };
 
   const playerName =

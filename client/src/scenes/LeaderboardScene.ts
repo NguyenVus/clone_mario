@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
-import { GAME_HEIGHT, GAME_WIDTH } from '../config';
 import { fetchLeaderboard } from '../systems/Api';
+import { MobileRuntime } from '../systems/MobileRuntime';
 import { PixelButton } from '../ui/Button';
 
 export class LeaderboardScene extends Phaser.Scene {
@@ -9,18 +9,22 @@ export class LeaderboardScene extends Phaser.Scene {
   }
 
   create(): void {
-    this.cameras.main.fadeIn(300, 0, 0, 0);
+    this.cameras.main.fadeIn(250, 0, 0, 0);
     this.cameras.main.setBackgroundColor('#16182c');
+    MobileRuntime.get().getTouchControls()?.setGameplayVisible(false);
 
-    this.add.nineslice(GAME_WIDTH / 2, GAME_HEIGHT / 2, 'ui-panel-9', 0, 366, 222, 8, 8, 8, 8);
+    const w = this.scale.width;
+    const h = this.scale.height;
+
+    this.add.nineslice(w / 2, h / 2, 'ui-panel-9', 0, Math.min(w - 20, 366), 222, 8, 8, 8, 8);
 
     this.add
-      .bitmapText(GAME_WIDTH / 2, 22, 'pixel-font', 'LEADERBOARD', 12)
+      .bitmapText(w / 2, 22, 'pixel-font', 'LEADERBOARD', 12)
       .setOrigin(0.5)
       .setTint(0xffe030);
 
     const statusText = this.add
-      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 10, 'Đang tải bảng xếp hạng...', {
+      .text(w / 2, h / 2 - 10, 'Đang tải bảng xếp hạng...', {
         fontFamily: 'monospace',
         fontSize: '10px',
         color: '#c8d0dc',
@@ -29,13 +33,19 @@ export class LeaderboardScene extends Phaser.Scene {
       .setOrigin(0.5);
 
     new PixelButton(this, {
-      x: GAME_WIDTH / 2,
-      y: GAME_HEIGHT - 26,
-      width: 120,
-      height: 22,
+      x: w / 2,
+      y: h - 26,
+      width: 130,
+      height: 24,
       label: 'VỀ MENU',
       onClick: () => this.scene.start('MenuScene'),
     });
+
+    const onResize = (): void => {
+      if (this.scene.isActive('LeaderboardScene')) this.scene.restart();
+    };
+    this.scale.on('resize', onResize);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.scale.off('resize', onResize));
 
     this.input.keyboard?.on('keydown-ESC', () => {
       this.scene.start('MenuScene');
@@ -60,7 +70,8 @@ export class LeaderboardScene extends Phaser.Scene {
     }
 
     statusText.destroy();
-    this.add.text(30, 38, '#   TÊN              MÀN   ĐIỂM     TG', {
+    const startX = Math.max(24, this.scale.width / 2 - 165);
+    this.add.text(startX, 38, '#   TÊN              MÀN   ĐIỂM     TG', {
       fontFamily: 'monospace',
       fontSize: '9px',
       color: '#ffe030',
@@ -74,7 +85,7 @@ export class LeaderboardScene extends Phaser.Scene {
       const lvl = entry.level.padEnd(5, ' ');
       const score = String(entry.score).padStart(7, '0');
       const sec = `${entry.durationSec}s`.padStart(4, ' ');
-      this.add.text(30, y, `${rank} ${name} ${lvl} ${score} ${sec}`, {
+      this.add.text(startX, y, `${rank} ${name} ${lvl} ${score} ${sec}`, {
         fontFamily: 'monospace',
         fontSize: '9px',
         color: idx === 0 ? '#40e8f8' : '#ffffff',

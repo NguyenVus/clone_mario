@@ -1,9 +1,9 @@
 import Phaser from 'phaser';
 import { scoreSubmissionSchema } from '@pixel-hero/shared';
 import { music } from '../audio/Music';
-import { GAME_HEIGHT, GAME_WIDTH } from '../config';
 import { submitScore } from '../systems/Api';
 import { getSession } from '../systems/GameSession';
+import { MobileRuntime } from '../systems/MobileRuntime';
 import { PixelButton } from '../ui/Button';
 
 export class VictoryScene extends Phaser.Scene {
@@ -15,27 +15,30 @@ export class VictoryScene extends Phaser.Scene {
 
   create(): void {
     music.stop();
+    MobileRuntime.get().getTouchControls()?.setGameplayVisible(false);
     this.cameras.main.setBackgroundColor('#121a2e');
     this.cameras.main.fadeIn(350, 0, 0, 0);
 
+    const w = this.scale.width;
+    const h = this.scale.height;
     const session = getSession();
     const snap = session.scoreManager.getSnapshot();
     session.saveData = session.saveManager.recordHighScore(snap.score);
     session.highestClearedLevel = '1-3';
 
     this.add
-      .bitmapText(GAME_WIDTH / 2, 26, 'pixel-font', 'VICTORY!', 16)
+      .bitmapText(w / 2, 24, 'pixel-font', 'VICTORY!', 16)
       .setOrigin(0.5)
       .setTint(0xffe030);
 
-    this.add.image(GAME_WIDTH / 2, 52, 'pip-fire', 0).setOrigin(0.5);
+    this.add.image(w / 2, 50, 'pip-fire', 0).setOrigin(0.5);
 
     const stats = [
       `ĐIỂM: ${snap.score}   |   GEM: ${snap.totalGemsCollected}`,
       `QUÁI DIỆT: ${snap.kills}   |   THỜI GIAN: ${Math.max(1, Math.round(session.runElapsedSec))}s`,
     ];
     this.add
-      .text(GAME_WIDTH / 2, 82, stats.join('\n'), {
+      .text(w / 2, 80, stats.join('\n'), {
         fontFamily: 'monospace',
         fontSize: '10px',
         color: '#ffffff',
@@ -45,7 +48,7 @@ export class VictoryScene extends Phaser.Scene {
       .setOrigin(0.5);
 
     const statusMsg = this.add
-      .text(GAME_WIDTH / 2, 144, 'Nhập tên để lưu thành tích:', {
+      .text(w / 2, 138, 'Nhập tên để lưu thành tích:', {
         fontFamily: 'monospace',
         fontSize: '9px',
         color: '#40e8f8',
@@ -57,10 +60,10 @@ export class VictoryScene extends Phaser.Scene {
 
     let submitted = false;
     new PixelButton(this, {
-      x: GAME_WIDTH / 2,
+      x: w / 2,
       y: 168,
-      width: 170,
-      height: 22,
+      width: 176,
+      height: 24,
       label: 'GỬI ĐIỂM & XEM BXH',
       onClick: async () => {
         if (submitted) return;
@@ -95,10 +98,10 @@ export class VictoryScene extends Phaser.Scene {
     });
 
     new PixelButton(this, {
-      x: GAME_WIDTH / 2,
-      y: GAME_HEIGHT - 24,
-      width: 120,
-      height: 22,
+      x: w / 2,
+      y: h - 26,
+      width: 130,
+      height: 24,
       label: 'VỀ MENU',
       onClick: () => {
         this.removeNameInput();
@@ -119,17 +122,18 @@ export class VictoryScene extends Phaser.Scene {
     Object.assign(input.style, {
       position: 'fixed',
       left: '50%',
-      top: '48%',
+      top: '46%',
       transform: 'translate(-50%, -50%)',
-      width: '210px',
-      padding: '6px 10px',
+      width: '220px',
+      minHeight: '40px',
+      padding: '8px 12px',
       fontFamily: 'monospace',
-      fontSize: '14px',
+      fontSize: '16px',
       textAlign: 'center',
       background: '#1c2038',
       color: '#ffffff',
       border: '2px solid #40e8f8',
-      borderRadius: '4px',
+      borderRadius: '6px',
       outline: 'none',
       zIndex: '2000',
     });

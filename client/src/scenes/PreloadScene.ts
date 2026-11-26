@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { getAllSpriteSpecs, registerAllAssets } from '../art/sprites';
 import type { OverrideManifest } from '../art/pixelArt';
-import { GAME_HEIGHT, GAME_WIDTH, isShotPreviewEnabled, isSpritePreviewEnabled } from '../config';
+import { DEFAULT_GAME_WIDTH, GAME_HEIGHT, isShotPreviewEnabled, isSpritePreviewEnabled } from '../config';
 
 export class PreloadScene extends Phaser.Scene {
   private overrideManifest: OverrideManifest | null = null;
@@ -34,12 +34,13 @@ export class PreloadScene extends Phaser.Scene {
   }
 
   create(): void {
-    const barBg = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, 200, 12, 0x222233);
+    const w = this.scale.width || DEFAULT_GAME_WIDTH;
+    const barBg = this.add.rectangle(w / 2, GAME_HEIGHT / 2, 200, 12, 0x222233);
     const barFill = this.add
-      .rectangle(GAME_WIDTH / 2 - 98, GAME_HEIGHT / 2, 4, 8, 0xff7818)
+      .rectangle(w / 2 - 98, GAME_HEIGHT / 2, 4, 8, 0xff7818)
       .setOrigin(0, 0.5);
     const label = this.add
-      .text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 18, 'LOADING...', {
+      .text(w / 2, GAME_HEIGHT / 2 - 18, 'LOADING...', {
         fontFamily: 'monospace',
         fontSize: '10px',
         color: '#ffffff',
@@ -114,7 +115,7 @@ export class PreloadScene extends Phaser.Scene {
     for (let i = 1; i <= 49; i++) {
       this.add.image(tx, ty, 'tileset', i).setOrigin(0, 0);
       tx += 18;
-      if (tx > GAME_WIDTH - 20) {
+      if (tx > DEFAULT_GAME_WIDTH - 20) {
         tx = 146;
         ty += 18;
       }

@@ -1,8 +1,8 @@
 import Phaser from 'phaser';
 import type { LevelId } from '@pixel-hero/shared';
 import { AUTOTILE_BASE, DIR_E, DIR_S, DIR_W, MASK_TO_47_INDEX } from '../art/autotile';
-import { GAME_WIDTH } from '../config';
 import { getLevelById, getSession } from '../systems/GameSession';
+import { MobileRuntime } from '../systems/MobileRuntime';
 
 export interface LevelIntroData {
   levelId: LevelId;
@@ -20,13 +20,15 @@ export class LevelIntroScene extends Phaser.Scene {
     const lvl = getLevelById(levelId);
     const snap = session.scoreManager.getSnapshot();
 
+    MobileRuntime.get().getTouchControls()?.setGameplayVisible(false);
+
     this.cameras.main.setBackgroundColor('#0c0a18');
     this.cameras.main.fadeIn(250, 0, 0, 0);
 
-    // Small theme illustration diorama inside a 9-slice frame
+    const w = this.scale.width;
     const cardW = 160;
     const cardH = 66;
-    const cx = GAME_WIDTH / 2;
+    const cx = w / 2;
     const cy = 62;
     this.add.nineslice(cx, cy, 'ui-panel-9', 0, cardW + 8, cardH + 8, 8, 8, 8, 8);
 
@@ -62,12 +64,12 @@ export class LevelIntroScene extends Phaser.Scene {
     }
 
     this.add
-      .bitmapText(GAME_WIDTH / 2, 118, 'pixel-font', `WORLD ${levelId}`, 12)
+      .bitmapText(w / 2, 118, 'pixel-font', `WORLD ${levelId}`, 12)
       .setOrigin(0.5)
       .setTint(0xffffff);
 
     this.add
-      .text(GAME_WIDTH / 2, 138, lvl.name.toUpperCase(), {
+      .text(w / 2, 138, lvl.name.toUpperCase(), {
         fontFamily: 'monospace',
         fontSize: '10px',
         color: '#ffe030',
@@ -75,14 +77,14 @@ export class LevelIntroScene extends Phaser.Scene {
       })
       .setOrigin(0.5);
 
-    const pip = this.add.sprite(GAME_WIDTH / 2 - 22, 172, 'pip-small', 0).setOrigin(0.5);
+    const pip = this.add.sprite(w / 2 - 22, 172, 'pip-small', 0).setOrigin(0.5);
     pip.play('pip-small-idle');
     this.add
-      .bitmapText(GAME_WIDTH / 2 + 6, 172, 'pixel-font', `x ${snap.lives}`, 8)
+      .bitmapText(w / 2 + 6, 172, 'pixel-font', `x ${snap.lives}`, 8)
       .setOrigin(0, 0.5);
 
     this.time.delayedCall(2200, () => {
-      this.cameras.main.fadeOut(300, 0, 0, 0);
+      this.cameras.main.fadeOut(250, 0, 0, 0);
       this.cameras.main.once('camerafadeoutcomplete', () => {
         this.scene.start('GameScene', { levelId });
       });

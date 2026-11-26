@@ -1,11 +1,12 @@
 import Phaser from 'phaser';
 import type { LevelId } from '@pixel-hero/shared';
+import { EXTRA_TILE_INDEX } from '../art/tileIndex';
 import { music } from '../audio/Music';
 import { synth } from '../audio/Synth';
 import {
   CAMERA_CONFIG,
+  FIXED_DT_MS,
   GAME_HEIGHT,
-  GAME_WIDTH,
   GAMEPLAY_CONFIG,
   PHYSICS_CONFIG,
   SCORE_VALUES,
@@ -23,11 +24,11 @@ import { MovingPlatform } from '../entities/MovingPlatform';
 import { nextPowerState, Player, type PowerState } from '../entities/Player';
 import { PowerUp, type PowerUpType } from '../entities/PowerUp';
 import { Shellbug } from '../entities/Shellbug';
-import { EXTRA_TILE_INDEX } from '../art/tileIndex';
 import { parseLevel, type LevelData } from '../levels/parser';
 import { EffectsSystem } from '../systems/Effects';
 import { getLevelById, getLevelNumber, getNextLevelId, getSession } from '../systems/GameSession';
 import { InputManager } from '../systems/InputManager';
+import { MobileRuntime } from '../systems/MobileRuntime';
 
 export interface GameSceneInitData {
   levelId: LevelId | '1-2-bonus';
@@ -62,6 +63,7 @@ export class GameScene extends Phaser.Scene {
   private fireballPool: Fireball[] = [];
   private bossBulletPool: BossBullet[] = [];
   private firebars: FirebarNode[] = [];
+  private checkpointsZones: Phaser.GameObjects.Zone[] = [];
 
   private flagpole: FlagPole | null = null;
   private castleDoorZone: Phaser.GameObjects.Zone | null = null;
@@ -71,7 +73,7 @@ export class GameScene extends Phaser.Scene {
   private arenaBarrier: Phaser.GameObjects.Rectangle | null = null;
 
   private parallaxLayers: Array<{ sprite: Phaser.GameObjects.TileSprite; factor: number; drift: number }> = [];
-  private glowSprites: Array<{ sprite: Phaser.GameObjects.Image; baseAlpha: number; phase: number; follow?: Phaser.GameObjects.Sprite }> = [];
+  private glowSprites: Array<{ sprite: Phaser.GameObjects.Image; baseAlpha: number; phase: number }> = [];
   private lightOverlayRt: Phaser.GameObjects.RenderTexture | null = null;
   private lightCutoutBrush: Phaser.GameObjects.Image | null = null;
   private staticLightSources: Array<{ x: number; y: number }> = [];
@@ -89,6 +91,10 @@ export class GameScene extends Phaser.Scene {
   private levelEnding = false;
   private transforming = false;
   private maxCameraX = 0;
+  private stepAccumulatorMs = 0;
+  private runtimeHighEffects = true;
+  private lowFpsAccumMs = 0;
+  private fpsSamples: number[] = [];
 
   private debugText: Phaser.GameObjects.Text | null = null;
 
@@ -112,9 +118,13 @@ export class GameScene extends Phaser.Scene {
     this.wasStarActive = false;
     this.lowTimeWarned = false;
     this.maxCameraX = 0;
+    this.stepAccumulatorMs = 0;
+    this.lowFpsAccumMs = 0;
+    this.fpsSamples = [];
     this.fireballPool = [];
     this.bossBulletPool = [];
     this.firebars = [];
+    this.checkpointsZones = [];
     this.parallaxLayers = [];
     this.glowSprites = [];
     this.staticLightSources = [];
@@ -128,6 +138,8 @@ export class GameScene extends Phaser.Scene {
     this.bossGlow = null;
     this.fireballGlows.clear();
 
+    this.runtimeHighEffects = session.saveData.settings.effectQuality !== 'low';
+
     if (initData?.fromBonus && session.bonusReturnState) {
       this.timeRemaining = session.bonusReturnState.timeRemaining;
     } else if (initData?.inheritedTime !== undefined) {
@@ -140,15 +152,17 @@ export class GameScene extends Phaser.Scene {
     const worldHeightPx = this.levelData.heightTiles * TILE_SIZE;
     this.physics.world.setBounds(0, 0, worldWidthPx, worldHeightPx + 64);
     this.physics.world.setBoundsCollision(true, true, false, false);
+    // Lock Arcade Physics to our 60Hz fixed-timestep accumulator
+    this.physics.disableUpdate();
 
-    this.setupBackground(worldWidthPx);
+    this.setupBackground();
     this.buildTilemap();
 
     this.inputManager = new InputManager(this);
     this.effects = new EffectsSystem(this);
     this.effects.setShakeEnabled(session.saveData.settings.shake);
+    this.effects.setLowParticleMode(!this.runtimeHighEffects);
 
-    // Groups
     this.passThroughGroup = this.physics.add.staticGroup();
     this.lavaGroup = this.physics.add.staticGroup();
     this.blockGroup = this.physics.add.staticGroup();
@@ -160,7 +174,6 @@ export class GameScene extends Phaser.Scene {
 
     this.populateEntities();
 
-    // Determine player spawn position (bonus return > checkpoint > default spawn)
     let spawnX = this.levelData.spawn.col * TILE_SIZE + TILE_SIZE / 2;
     let spawnY = (this.levelData.spawn.row + 1) * TILE_SIZE;
     if (initData?.fromBonus && session.bonusReturnState) {
@@ -173,11 +186,13 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.player = new Player(this, spawnX, spawnY, session.playerPower);
+    this.player.setAlwaysRun(session.saveData.settings.alwaysRun);
     this.player.setCallbacks({
       onEmitDust: (x, y) => this.effects.emitDust(x, y, 2),
       onEmitStarTrail: (x, y) => this.effects.emitStarTrail(x, y),
       onLandHard: (x, y) => this.effects.emitDust(x, y, 4),
       onJumpSound: (isBig) => (isBig ? synth.bigJump() : synth.jump()),
+      onJumpTrigger: () => this.vibrateDevice(10),
       onFireball: (x, y, dir) => this.spawnFireball(x, y, dir),
     });
 
@@ -187,7 +202,6 @@ export class GameScene extends Phaser.Scene {
       .setDepth(9)
       .setVisible(false);
 
-    // Pools for fireballs and boss bullets
     for (let i = 0; i < 4; i++) {
       const fb = new Fireball(this);
       this.fireballPool.push(fb);
@@ -205,53 +219,101 @@ export class GameScene extends Phaser.Scene {
 
     this.setupCollisions();
     this.setupCamera(worldWidthPx, worldHeightPx);
-    this.setupLightingOverlay(session.saveData.settings.highEffects);
+    this.setupLightingOverlay(this.runtimeHighEffects);
     this.setupDebugKeys();
 
-    // Launch UIScene in parallel
-    this.scene.launch('UIScene', { levelId: this.levelData.id, inputManager: this.inputManager });
+    // Launch UIScene and connect HTML touch overlay
+    this.scene.launch('UIScene', { levelId: this.levelData.id });
+    const touchCtrl = MobileRuntime.get().getTouchControls();
+    touchCtrl?.attachInputManager(this.inputManager);
+    touchCtrl?.setGameplayVisible(true);
 
-    // Start music
     synth.unlock();
     session.applyAudioSettings();
     music.play(this.levelData.music, this.timeRemaining <= GAMEPLAY_CONFIG.LOW_TIME_THRESHOLD ? 1.25 : 1);
 
-    // Iris wipe open centered on Pip
     const cam = this.cameras.main;
     cam.centerOn(this.player.x, this.player.y);
-    const sx = Phaser.Math.Clamp(this.player.x - cam.scrollX, 20, GAME_WIDTH - 20);
+    const sx = Phaser.Math.Clamp(this.player.x - cam.scrollX, 20, this.scale.width - 20);
     const sy = Phaser.Math.Clamp(this.player.y - 12 - cam.scrollY, 20, GAME_HEIGHT - 20);
     this.effects.playIrisOpen(sx, sy, 420);
 
+    const onResize = (): void => {
+      if (!this.scene.isActive('GameScene')) return;
+      this.handleViewportResize();
+    };
+    this.scale.on('resize', onResize);
+
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.scale.off('resize', onResize);
       this.scene.stop('UIScene');
       this.lightCutoutBrush?.destroy();
+      MobileRuntime.get().getTouchControls()?.setGameplayVisible(false);
+      MobileRuntime.get().getTouchControls()?.attachInputManager(null);
     });
   }
 
-  private setupBackground(_worldWidthPx: number): void {
+  private handleViewportResize(): void {
+    const w = this.scale.width;
+    const h = this.scale.height;
+    const worldWidthPx = this.levelData.widthTiles * TILE_SIZE;
+    const worldHeightPx = this.levelData.heightTiles * TILE_SIZE;
+
+    const cam = this.cameras.main;
+    if (this.bossArenaLocked) {
+      const arenaLeft = 194 * TILE_SIZE;
+      cam.setBounds(arenaLeft, 0, Math.max(w, 26 * TILE_SIZE), worldHeightPx);
+    } else {
+      cam.setBounds(0, 0, worldWidthPx, worldHeightPx);
+    }
+
+    for (const layer of this.parallaxLayers) {
+      layer.sprite.setSize(w, layer.sprite.height);
+    }
+    if (this.lavaGlowRect) {
+      this.lavaGlowRect.setPosition(w / 2, h - 14).setSize(w, 28);
+    }
+    if (this.lightOverlayRt) {
+      this.lightOverlayRt.resize(w, h);
+    }
+  }
+
+  private vibrateDevice(ms: number): void {
+    const session = getSession();
+    if (!session.saveData.settings.vibrate) return;
+    if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+      try {
+        navigator.vibrate(ms);
+      } catch {
+        // ignore unsupported browser vibration calls
+      }
+    }
+  }
+
+  private setupBackground(): void {
+    const w = this.scale.width;
     const theme = this.levelData.theme;
     const bgHex = theme === 'grass' ? '#4488e8' : theme === 'cave' ? '#121226' : '#1a101a';
     this.cameras.main.setBackgroundColor(bgHex);
 
     if (theme === 'grass') {
       const sky = this.add
-        .tileSprite(0, 0, GAME_WIDTH, GAME_HEIGHT, 'bg-grass-sky')
+        .tileSprite(0, 0, w, GAME_HEIGHT, 'bg-grass-sky')
         .setOrigin(0, 0)
         .setScrollFactor(0)
         .setDepth(0);
       const mountains = this.add
-        .tileSprite(0, GAME_HEIGHT - 138, GAME_WIDTH, 120, 'bg-grass-mountains')
+        .tileSprite(0, GAME_HEIGHT - 138, w, 120, 'bg-grass-mountains')
         .setOrigin(0, 0)
         .setScrollFactor(0)
         .setDepth(1);
       const hills = this.add
-        .tileSprite(0, GAME_HEIGHT - 102, GAME_WIDTH, 80, 'bg-grass-hills')
+        .tileSprite(0, GAME_HEIGHT - 102, w, 80, 'bg-grass-hills')
         .setOrigin(0, 0)
         .setScrollFactor(0)
         .setDepth(2);
       const clouds = this.add
-        .tileSprite(0, 12, GAME_WIDTH, 64, 'bg-grass-clouds')
+        .tileSprite(0, 12, w, 64, 'bg-grass-clouds')
         .setOrigin(0, 0)
         .setScrollFactor(0)
         .setDepth(2);
@@ -263,17 +325,17 @@ export class GameScene extends Phaser.Scene {
       );
     } else if (theme === 'cave') {
       const sky = this.add
-        .tileSprite(0, 0, GAME_WIDTH, GAME_HEIGHT, 'bg-cave-sky')
+        .tileSprite(0, 0, w, GAME_HEIGHT, 'bg-cave-sky')
         .setOrigin(0, 0)
         .setScrollFactor(0)
         .setDepth(0);
       const rocks = this.add
-        .tileSprite(0, 0, GAME_WIDTH, GAME_HEIGHT, 'bg-cave-rocks')
+        .tileSprite(0, 0, w, GAME_HEIGHT, 'bg-cave-rocks')
         .setOrigin(0, 0)
         .setScrollFactor(0)
         .setDepth(1);
       const crystals = this.add
-        .tileSprite(0, 0, GAME_WIDTH, GAME_HEIGHT, 'bg-cave-crystals')
+        .tileSprite(0, 0, w, GAME_HEIGHT, 'bg-cave-crystals')
         .setOrigin(0, 0)
         .setScrollFactor(0)
         .setDepth(2);
@@ -283,11 +345,10 @@ export class GameScene extends Phaser.Scene {
         { sprite: crystals, factor: 0.35, drift: 0 },
       );
 
-      // Ambient drifting dust motes in cave
-      for (let i = 0; i < 18; i++) {
+      for (let i = 0; i < 16; i++) {
         const mote = this.add
           .rectangle(
-            Phaser.Math.Between(0, GAME_WIDTH),
+            Phaser.Math.Between(0, w),
             Phaser.Math.Between(24, GAME_HEIGHT - 24),
             1,
             1,
@@ -304,17 +365,17 @@ export class GameScene extends Phaser.Scene {
       }
     } else {
       const sky = this.add
-        .tileSprite(0, 0, GAME_WIDTH, GAME_HEIGHT, 'bg-castle-sky')
+        .tileSprite(0, 0, w, GAME_HEIGHT, 'bg-castle-sky')
         .setOrigin(0, 0)
         .setScrollFactor(0)
         .setDepth(0);
       const wall = this.add
-        .tileSprite(0, 0, GAME_WIDTH, GAME_HEIGHT, 'bg-castle-wall')
+        .tileSprite(0, 0, w, GAME_HEIGHT, 'bg-castle-wall')
         .setOrigin(0, 0)
         .setScrollFactor(0)
         .setDepth(1);
       const pillars = this.add
-        .tileSprite(0, 0, GAME_WIDTH, GAME_HEIGHT, 'bg-castle-pillars')
+        .tileSprite(0, 0, w, GAME_HEIGHT, 'bg-castle-pillars')
         .setOrigin(0, 0)
         .setScrollFactor(0)
         .setDepth(2);
@@ -324,9 +385,8 @@ export class GameScene extends Phaser.Scene {
         { sprite: pillars, factor: 0.35, drift: 0 },
       );
 
-      // Warm lava up-glow along bottom edge of castle screen
       this.lavaGlowRect = this.add
-        .rectangle(GAME_WIDTH / 2, GAME_HEIGHT - 14, GAME_WIDTH, 28, 0xff5c18, 0.22)
+        .rectangle(w / 2, GAME_HEIGHT - 14, w, 28, 0xff5c18, 0.22)
         .setScrollFactor(0)
         .setBlendMode(Phaser.BlendModes.ADD)
         .setDepth(2);
@@ -352,7 +412,7 @@ export class GameScene extends Phaser.Scene {
     if (!highEffects) return;
     if (this.levelData.theme === 'cave' || this.levelData.theme === 'castle') {
       this.lightOverlayRt = this.add
-        .renderTexture(0, 0, GAME_WIDTH, GAME_HEIGHT)
+        .renderTexture(0, 0, this.scale.width, GAME_HEIGHT)
         .setOrigin(0, 0)
         .setScrollFactor(0)
         .setDepth(18);
@@ -360,10 +420,27 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  private populateEntities(): void {
-    const highEffects = getSession().saveData.settings.highEffects;
+  private downgradeEffectsForMobilePerformance(): void {
+    if (!this.runtimeHighEffects) return;
+    this.runtimeHighEffects = false;
+    this.effects.setLowParticleMode(true);
+    this.lightOverlayRt?.destroy();
+    this.lightOverlayRt = null;
+    this.lightCutoutBrush?.destroy();
+    this.lightCutoutBrush = null;
+    for (const g of this.glowSprites) g.sprite.setVisible(false);
+    for (const hs of this.heatShimmerStrips) hs.rect.setVisible(false);
+    if (this.lavaGlowRect) this.lavaGlowRect.setVisible(false);
+    // Reduce parallax layers to at most 2 on low performance
+    while (this.parallaxLayers.length > 2) {
+      const removed = this.parallaxLayers.pop();
+      removed?.sprite.setVisible(false);
+    }
+  }
 
-    // Seeded level decorations (non-colliding)
+  private populateEntities(): void {
+    const highEffects = this.runtimeHighEffects;
+
     for (const dec of this.levelData.decorations) {
       const dx = dec.col * TILE_SIZE + TILE_SIZE / 2;
       const dy = (dec.row + 1) * TILE_SIZE;
@@ -403,7 +480,6 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    // Pass-through bridges '='
     for (const pt of this.levelData.passThroughTiles) {
       const bridge = this.passThroughGroup.create(
         pt.col * TILE_SIZE + TILE_SIZE / 2,
@@ -422,7 +498,6 @@ export class GameScene extends Phaser.Scene {
       body.updateFromGameObject();
     }
 
-    // Lava 'L'
     for (const lv of this.levelData.lavaTiles) {
       const lx = lv.col * TILE_SIZE + TILE_SIZE / 2;
       const ly = lv.row * TILE_SIZE + TILE_SIZE / 2;
@@ -448,19 +523,16 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    // Interactive blocks
     for (const b of this.levelData.blocks) {
       const block = new InteractiveBlock(this, b.col, b.row, b.kind, this.levelData.theme);
       this.blockGroup.add(block);
     }
 
-    // Floating gems
     for (const g of this.levelData.gems) {
       const gem = new Gem(this, g.col, g.row);
       this.gemGroup.add(gem);
     }
 
-    // Enemies
     for (const e of this.levelData.enemies) {
       if (e.kind === 'blob') {
         const blob = new Blob(this, e.col, e.row, this.levelData.edgeAwareEnemies);
@@ -471,13 +543,11 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    // Moving platforms
     for (const p of this.levelData.platforms) {
       const plat = new MovingPlatform(this, p.col, p.row, p.axis);
       this.platformGroup.add(plat);
     }
 
-    // Firebars (1-3)
     for (const fb of this.levelData.firebars) {
       const anchorX = fb.col * TILE_SIZE + TILE_SIZE / 2;
       const anchorY = fb.row * TILE_SIZE + TILE_SIZE / 2;
@@ -495,7 +565,6 @@ export class GameScene extends Phaser.Scene {
       this.firebars.push({ anchorX, anchorY, angleRad: 0, speedRad, balls });
     }
 
-    // Checkpoints
     for (const cp of this.levelData.checkpoints) {
       const cpZone = this.add.zone(
         cp.col * TILE_SIZE + TILE_SIZE / 2,
@@ -511,7 +580,6 @@ export class GameScene extends Phaser.Scene {
       this.checkpointsZones.push(cpZone);
     }
 
-    // Flagpole & Castle Door
     if (this.levelData.flagpole) {
       this.flagpole = new FlagPole(this, this.levelData.flagpole.col, this.levelData.flagpole.row);
     }
@@ -523,7 +591,6 @@ export class GameScene extends Phaser.Scene {
       this.physics.add.existing(this.castleDoorZone, true);
     }
 
-    // Boss (Magma King)
     if (this.levelData.boss) {
       this.boss = new MagmaKing(this, this.levelData.boss.col, this.levelData.boss.row);
       this.boss.setArenaBounds(194 * TILE_SIZE, 219 * TILE_SIZE);
@@ -545,10 +612,7 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  private checkpointsZones: Phaser.GameObjects.Zone[] = [];
-
   private setupCollisions(): void {
-    // Player vs static world tiles (with corner correction on upward bump)
     this.physics.add.collider(this.player, this.solidLayer);
     this.physics.add.collider(this.player, this.passThroughGroup);
     this.physics.add.collider(this.player, this.platformGroup, (_p, platObj) => {
@@ -560,7 +624,6 @@ export class GameScene extends Phaser.Scene {
       }
     });
 
-    // Player vs interactive blocks (custom processCallback for hidden blocks!)
     this.physics.add.collider(
       this.player,
       this.blockGroup,
@@ -572,7 +635,6 @@ export class GameScene extends Phaser.Scene {
       },
     );
 
-    // Gems
     this.physics.add.overlap(this.player, this.gemGroup, (_p, gemObj) => {
       const gem = gemObj as Gem;
       if (!gem.active) return;
@@ -580,7 +642,6 @@ export class GameScene extends Phaser.Scene {
       this.collectGem(gem.x, gem.y, SCORE_VALUES.FLOATING_GEM);
     });
 
-    // PowerUps
     this.physics.add.collider(this.powerUpGroup, this.solidLayer);
     this.physics.add.collider(this.powerUpGroup, this.blockGroup);
     this.physics.add.collider(this.powerUpGroup, this.passThroughGroup);
@@ -590,7 +651,6 @@ export class GameScene extends Phaser.Scene {
       this.collectPowerUp(pu);
     });
 
-    // Blobs
     this.physics.add.collider(this.blobGroup, this.solidLayer);
     this.physics.add.collider(this.blobGroup, this.blockGroup);
     this.physics.add.collider(this.blobGroup, this.passThroughGroup);
@@ -599,12 +659,10 @@ export class GameScene extends Phaser.Scene {
       (b as Blob).reverseDirection();
     });
 
-    // Shellbugs
     this.physics.add.collider(this.shellbugGroup, this.solidLayer);
     this.physics.add.collider(this.shellbugGroup, this.blockGroup);
     this.physics.add.collider(this.shellbugGroup, this.passThroughGroup);
 
-    // Blob vs Shellbug (sliding shell kills Blob; walking reverse)
     this.physics.add.overlap(this.blobGroup, this.shellbugGroup, (blobObj, sbObj) => {
       const blob = blobObj as Blob;
       const sb = sbObj as Shellbug;
@@ -620,7 +678,6 @@ export class GameScene extends Phaser.Scene {
       }
     });
 
-    // Shellbug vs Shellbug
     this.physics.add.overlap(this.shellbugGroup, this.shellbugGroup, (aObj, bObj) => {
       if (aObj === bObj) return;
       const a = aObj as Shellbug;
@@ -640,17 +697,14 @@ export class GameScene extends Phaser.Scene {
       }
     });
 
-    // Player vs Blobs
     this.physics.add.overlap(this.player, this.blobGroup, (_p, blobObj) => {
       this.handlePlayerBlobOverlap(blobObj as Blob);
     });
 
-    // Player vs Shellbugs
     this.physics.add.overlap(this.player, this.shellbugGroup, (_p, sbObj) => {
       this.handlePlayerShellbugOverlap(sbObj as Shellbug);
     });
 
-    // Fireballs vs world / enemies / boss
     for (const fb of this.fireballPool) {
       this.physics.add.collider(fb, this.solidLayer);
       this.physics.add.collider(fb, this.blockGroup);
@@ -678,14 +732,12 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    // Lava hazard
     this.physics.add.overlap(this.player, this.lavaGroup, () => {
       if (!this.player.isDead && !this.player.isGodMode()) {
         this.killPlayer();
       }
     });
 
-    // Firebars
     for (const node of this.firebars) {
       for (const ball of node.balls) {
         this.physics.add.overlap(this.player, ball, () => {
@@ -696,7 +748,6 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    // Boss vs world & player & bullets
     if (this.boss) {
       this.physics.add.collider(this.boss, this.solidLayer);
       this.physics.add.overlap(this.player, this.boss, () => {
@@ -713,7 +764,6 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    // Checkpoints
     for (const cpZone of this.checkpointsZones) {
       this.physics.add.overlap(this.player, cpZone, () => {
         const pos = cpZone.getData('checkpointPos') as { x: number; y: number } | undefined;
@@ -724,7 +774,6 @@ export class GameScene extends Phaser.Scene {
       });
     }
 
-    // Flagpole
     if (this.flagpole) {
       this.physics.add.overlap(this.player, this.flagpole.triggerZone, () => {
         if (this.flagpole && !this.flagpole.triggered && !this.player.isDead && !this.levelEnding) {
@@ -733,7 +782,6 @@ export class GameScene extends Phaser.Scene {
       });
     }
 
-    // Castle door (1-3 after boss dies, or direct door if no flagpole)
     if (this.castleDoorZone) {
       this.physics.add.overlap(this.player, this.castleDoorZone, () => {
         if (this.levelEnding || this.player.isDead) return;
@@ -755,7 +803,7 @@ export class GameScene extends Phaser.Scene {
   private setupDebugKeys(): void {
     if (!isDebugEnabled()) return;
     this.debugText = this.add
-      .text(6, 24, '', {
+      .text(6, 26, '', {
         fontFamily: 'monospace',
         fontSize: '8px',
         color: '#40e8f8',
@@ -878,7 +926,7 @@ export class GameScene extends Phaser.Scene {
     this.transforming = true;
     this.physics.world.pause();
     let step = 0;
-    const timer = this.time.addEvent({
+    this.time.addEvent({
       delay: 75,
       repeat: 7,
       callback: () => {
@@ -891,14 +939,12 @@ export class GameScene extends Phaser.Scene {
         }
       },
     });
-    void timer;
   }
 
   private handleHeadBonkAndCornerCorrection(prevVy: number): void {
     const pBody = this.player.getArcadeBody();
     if (!pBody.blocked.up) return;
 
-    // 1. Find closest InteractiveBlock directly above Pip's horizontal center
     const headX = pBody.center.x;
     const headTop = pBody.top;
     let bestBlock: InteractiveBlock | null = null;
@@ -908,7 +954,6 @@ export class GameScene extends Phaser.Scene {
       const block = obj as InteractiveBlock;
       if (!block.active) continue;
       if (block.kind === 'hidden-1up' && !block.hiddenRevealed) {
-        // Also check overlap for unrevealed hidden blocks if jumping upward
         if (
           Math.abs(block.x - headX) <= 12 &&
           headTop <= block.y + 10 &&
@@ -940,7 +985,6 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
-    // 2. Corner correction (<= 4px) on solid tiles when jumping upward
     if (prevVy < -30) {
       const leftEdge = pBody.left;
       const rightEdge = pBody.right;
@@ -970,7 +1014,6 @@ export class GameScene extends Phaser.Scene {
     const outcome = block.hitFromBelow(isBigOrFire, this.time.now);
     if (outcome.type === 'none') return;
 
-    // Kill any enemies standing directly on top of the bumped block
     const blockTop = block.y - TILE_SIZE / 2;
     for (const obj of this.blobGroup.getChildren()) {
       const blob = obj as Blob;
@@ -1050,10 +1093,8 @@ export class GameScene extends Phaser.Scene {
   }
 
   private bouncePlayerAfterStomp(): void {
-    const pBody = this.player.getArcadeBody();
-    const input = this.inputManager.poll();
-    const vy = input.jump ? PHYSICS_CONFIG.STOMP_BOUNCE_HOLD : PHYSICS_CONFIG.STOMP_BOUNCE;
-    pBody.setVelocityY(vy);
+    const jumpHeld = this.inputManager.getLastState().jumpHeld;
+    this.player.applyStompBounce(jumpHeld);
   }
 
   private handlePlayerBlobOverlap(blob: Blob): void {
@@ -1131,7 +1172,7 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     if (this.isStompHit(this.boss.getArcadeBody())) {
-      this.player.getArcadeBody().setVelocityY(PHYSICS_CONFIG.STOMP_BOUNCE_HOLD);
+      this.player.applyStompBounce(true);
       this.damageBoss();
     } else {
       this.hurtPlayer();
@@ -1153,7 +1194,12 @@ export class GameScene extends Phaser.Scene {
       this.bossGlow = null;
       getSession().scoreManager.addScore(SCORE_VALUES.BOSS_KILL);
       getSession().scoreManager.registerKill(true);
-      this.effects.spawnScoreText(this.boss.x, this.boss.y - 40, String(SCORE_VALUES.BOSS_KILL), 0xffe030);
+      this.effects.spawnScoreText(
+        this.boss.x,
+        this.boss.y - 40,
+        String(SCORE_VALUES.BOSS_KILL),
+        0xffe030,
+      );
       this.events.emit('boss-hide');
       this.time.delayedCall(900, () => {
         if (this.boss?.active) this.boss.destroy();
@@ -1168,6 +1214,7 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
+    this.vibrateDevice(30);
     const res = nextPowerState(this.player.powerState, 'hurt');
     if (res.died) {
       this.killPlayer();
@@ -1186,6 +1233,7 @@ export class GameScene extends Phaser.Scene {
     this.player.isDead = true;
     this.levelEnding = true;
     this.inputManager.setLocked(true);
+    this.vibrateDevice(30);
 
     const session = getSession();
     session.playerPower = 'small';
@@ -1201,13 +1249,15 @@ export class GameScene extends Phaser.Scene {
       this.physics.world.resume();
       const body = this.player.getArcadeBody();
       body.checkCollision.none = true;
+      body.setAllowGravity(true);
+      body.setGravityY(PHYSICS_CONFIG.GRAVITY);
       body.setVelocity(0, -340);
     });
 
     this.time.delayedCall(2100, () => {
       if (!this.scene.isActive('GameScene')) return;
       const cam = this.cameras.main;
-      const sx = Phaser.Math.Clamp(this.player.x - cam.scrollX, 20, GAME_WIDTH - 20);
+      const sx = Phaser.Math.Clamp(this.player.x - cam.scrollX, 20, this.scale.width - 20);
       const sy = Phaser.Math.Clamp(this.player.y - 10 - cam.scrollY, 20, GAME_HEIGHT - 20);
       this.effects.playIrisClose(sx, sy, 400, () => {
         const remainingLives = session.scoreManager.loseLife();
@@ -1236,7 +1286,6 @@ export class GameScene extends Phaser.Scene {
     synth.flagpole();
     pole.lowerFlag(800);
 
-    pBody.setAllowGravity(false);
     pBody.setVelocity(0, 0);
     this.player.x = pole.poleX - 4;
 
@@ -1246,7 +1295,6 @@ export class GameScene extends Phaser.Scene {
       duration: 750,
       ease: 'Linear',
       onComplete: () => {
-        pBody.setAllowGravity(true);
         const targetX = this.castleDoorZone ? this.castleDoorZone.x : pole.poleX + 80;
         this.walkIntoDoorAndAdvance(targetX);
       },
@@ -1354,7 +1402,6 @@ export class GameScene extends Phaser.Scene {
     synth.powerupAppear();
     const pBody = this.player.getArcadeBody();
     pBody.setVelocity(0, 0);
-    pBody.setAllowGravity(false);
     pBody.checkCollision.none = true;
     this.player.setDepth(2);
 
@@ -1391,8 +1438,7 @@ export class GameScene extends Phaser.Scene {
     return false;
   }
 
-  override update(_time: number, delta: number): void {
-    const dtMs = Math.min(delta, 50);
+  private fixedStep(dtMs: number): void {
     const session = getSession();
 
     const input = this.inputManager.poll();
@@ -1412,17 +1458,16 @@ export class GameScene extends Phaser.Scene {
     }
 
     const cam = this.cameras.main;
+    const viewW = this.scale.width;
     const camLeft = cam.scrollX;
-    const camRight = cam.scrollX + GAME_WIDTH;
+    const camRight = cam.scrollX + viewW;
     const worldWidthPx = this.levelData.widthTiles * TILE_SIZE;
     const worldHeightPx = this.levelData.heightTiles * TILE_SIZE;
 
-    // Update platforms first so deltaX/deltaY is fresh
     for (const obj of this.platformGroup.getChildren()) {
       (obj as MovingPlatform).updatePlatform(dtMs);
     }
 
-    // Rotate firebars (1-3)
     for (const node of this.firebars) {
       node.angleRad += node.speedRad * (dtMs / 1000);
       for (let i = 0; i < node.balls.length; i++) {
@@ -1434,23 +1479,48 @@ export class GameScene extends Phaser.Scene {
     }
 
     const prevVy = this.player.getArcadeBody().velocity.y;
-    this.player.updatePlayer(dtMs, input, this.maxCameraX, worldWidthPx);
+    this.player.fixedUpdatePlayer(dtMs, input, this.maxCameraX, worldWidthPx);
+
+    for (const obj of this.powerUpGroup.getChildren()) {
+      (obj as PowerUp).updatePowerUp();
+    }
+
+    const groundCheck = (wx: number, wy: number): boolean => this.hasSolidTileAt(wx, wy);
+    for (const obj of this.blobGroup.getChildren()) {
+      const blob = obj as Blob;
+      blob.activateIfNear(camRight);
+      blob.updateBlob(groundCheck, worldHeightPx);
+    }
+    for (const obj of this.shellbugGroup.getChildren()) {
+      const sb = obj as Shellbug;
+      sb.activateIfNear(camRight);
+      sb.updateShellbug(dtMs, groundCheck, worldHeightPx);
+    }
+
+    if (this.boss && this.boss.active) {
+      this.boss.updateBoss(dtMs, this.player.x, this.player.y);
+      if (this.bossGlow) {
+        this.bossGlow.setPosition(Math.round(this.boss.x), Math.round(this.boss.y - 24));
+      }
+    }
+
+    // Advance Arcade Physics by exact 1/60s fixed step
+    if (!this.physics.world.isPaused) {
+      this.physics.world.singleStep();
+    }
 
     if (!this.levelEnding) {
       this.handleHeadBonkAndCornerCorrection(prevVy);
       this.checkWarpPipes(input.down);
 
-      // Reset stomp combo when landing on solid ground
       if (this.player.getArcadeBody().blocked.down) {
         session.scoreManager.resetCombo();
       }
 
-      // Fall into pit
       if (this.player.y > worldHeightPx + 24) {
         this.killPlayer();
       }
 
-      // Timer countdown
       this.timeRemaining = Math.max(0, this.timeRemaining - dtMs / 1000);
       session.runElapsedSec += dtMs / 1000;
       this.events.emit('time-update', this.timeRemaining);
@@ -1464,7 +1534,6 @@ export class GameScene extends Phaser.Scene {
         this.killPlayer();
       }
 
-      // Star music transition
       const starNow = this.player.hasStar();
       if (this.wasStarActive && !starNow) {
         music.play(
@@ -1474,17 +1543,15 @@ export class GameScene extends Phaser.Scene {
       }
       this.wasStarActive = starNow;
 
-      // Boss Arena lock (1-3)
       if (this.boss && !this.bossArenaLocked && this.player.x >= 194 * TILE_SIZE) {
         this.bossArenaLocked = true;
         const arenaLeft = 194 * TILE_SIZE;
-        const arenaWidth = 26 * TILE_SIZE;
+        const arenaWidth = Math.max(viewW, 26 * TILE_SIZE);
         cam.stopFollow();
         cam.setBounds(arenaLeft, 0, arenaWidth, worldHeightPx);
         cam.scrollX = arenaLeft;
         this.maxCameraX = arenaLeft;
 
-        // Close gate behind Pip
         this.arenaBarrier = this.add
           .rectangle(193.5 * TILE_SIZE, 120, TILE_SIZE, 240, 0x485060)
           .setDepth(5);
@@ -1496,30 +1563,10 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    // Clamp left camera backtracking
     if (!this.bossArenaLocked && cam.scrollX > this.maxCameraX && PHYSICS_CONFIG.PREVENT_BACKTRACK) {
       this.maxCameraX = cam.scrollX;
     }
 
-    // Update active powerups
-    for (const obj of this.powerUpGroup.getChildren()) {
-      (obj as PowerUp).updatePowerUp();
-    }
-
-    // Update enemies within camera activation zone
-    const groundCheck = (wx: number, wy: number): boolean => this.hasSolidTileAt(wx, wy);
-    for (const obj of this.blobGroup.getChildren()) {
-      const blob = obj as Blob;
-      blob.activateIfNear(camRight);
-      blob.updateBlob(groundCheck, worldHeightPx);
-    }
-    for (const obj of this.shellbugGroup.getChildren()) {
-      const sb = obj as Shellbug;
-      sb.activateIfNear(camRight);
-      sb.updateShellbug(dtMs, groundCheck, worldHeightPx);
-    }
-
-    // Update fireballs, fireball additive glows & boss bullets
     for (const fb of this.fireballPool) {
       const glow = this.fireballGlows.get(fb);
       if (fb.updateFireball(camLeft, camRight, worldHeightPx)) {
@@ -1527,7 +1574,7 @@ export class GameScene extends Phaser.Scene {
         fb.deactivate();
       }
       if (glow) {
-        glow.setVisible(fb.active);
+        glow.setVisible(this.runtimeHighEffects && fb.active);
         if (fb.active) glow.setPosition(Math.round(fb.x), Math.round(fb.y));
       }
     }
@@ -1535,76 +1582,126 @@ export class GameScene extends Phaser.Scene {
       bullet.updateBullet(camLeft, camRight, worldHeightPx);
     }
 
-    if (this.boss && this.boss.active) {
-      this.boss.updateBoss(dtMs, this.player.x, this.player.y);
-      if (this.bossGlow) {
-        this.bossGlow.setPosition(Math.round(this.boss.x), Math.round(this.boss.y - 24));
-      }
-    }
+    this.player.recordPrevBottom();
+  }
 
-    // Parallax scrolling & continuous clouds / cave dust / glow flicker / lava shimmer
+  private renderEffectsAndLighting(dtMs: number): void {
+    const cam = this.cameras.main;
+    const viewW = this.scale.width;
+    const camLeft = cam.scrollX;
+    const camRight = cam.scrollX + viewW;
+
     const scrollX = Math.round(cam.scrollX);
     for (const layer of this.parallaxLayers) {
-      layer.sprite.tilePositionX = scrollX * layer.factor + (this.time.now * 0.001 * layer.drift);
+      layer.sprite.tilePositionX = scrollX * layer.factor + this.time.now * 0.001 * layer.drift;
     }
     for (const mote of this.dustMotes) {
-      mote.obj.x = (mote.obj.x + mote.speedX * (dtMs / 1000) + GAME_WIDTH) % GAME_WIDTH;
+      mote.obj.x = (mote.obj.x + mote.speedX * (dtMs / 1000) + viewW) % viewW;
       mote.obj.y = (mote.obj.y + mote.speedY * (dtMs / 1000) + GAME_HEIGHT) % GAME_HEIGHT;
     }
-    for (const g of this.glowSprites) {
-      const flicker = Math.sin(this.time.now * 0.009 + g.phase) * 0.12 + Math.sin(this.time.now * 0.023 + g.phase) * 0.06;
-      g.sprite.setAlpha(Phaser.Math.Clamp(g.baseAlpha + flicker, 0.2, 0.95));
-    }
-    for (const hs of this.heatShimmerStrips) {
-      hs.rect.y = hs.baseY + Math.sin(this.time.now * 0.01 + hs.phase) * 1.5;
-    }
-    if (this.levelData.lavaTiles.length > 0) {
-      this.lavaBubbleTimerMs += dtMs;
-      if (this.lavaBubbleTimerMs >= 260) {
-        this.lavaBubbleTimerMs = 0;
-        const lv = this.levelData.lavaTiles[Phaser.Math.Between(0, this.levelData.lavaTiles.length - 1)]!;
-        const bx = lv.col * TILE_SIZE + Phaser.Math.Between(2, 14);
-        if (bx >= camLeft && bx <= camRight) {
-          this.effects.emitLavaBubble(bx, lv.row * TILE_SIZE + 4);
+    if (this.runtimeHighEffects) {
+      for (const g of this.glowSprites) {
+        const flicker =
+          Math.sin(this.time.now * 0.009 + g.phase) * 0.12 +
+          Math.sin(this.time.now * 0.023 + g.phase) * 0.06;
+        g.sprite.setAlpha(Phaser.Math.Clamp(g.baseAlpha + flicker, 0.2, 0.95));
+      }
+      for (const hs of this.heatShimmerStrips) {
+        hs.rect.y = hs.baseY + Math.sin(this.time.now * 0.01 + hs.phase) * 1.5;
+      }
+      if (this.levelData.lavaTiles.length > 0) {
+        this.lavaBubbleTimerMs += dtMs;
+        if (this.lavaBubbleTimerMs >= 260) {
+          this.lavaBubbleTimerMs = 0;
+          const lv = this.levelData.lavaTiles[Phaser.Math.Between(0, this.levelData.lavaTiles.length - 1)]!;
+          const bx = lv.col * TILE_SIZE + Phaser.Math.Between(2, 14);
+          if (bx >= camLeft && bx <= camRight) {
+            this.effects.emitLavaBubble(bx, lv.row * TILE_SIZE + 4);
+          }
         }
       }
-    }
-    if (this.lavaGlowRect) {
-      this.lavaGlowRect.setAlpha(0.18 + Math.sin(this.time.now * 0.006) * 0.05);
-    }
-
-    // Star glow around Pip
-    if (this.starGlow) {
-      this.starGlow.setVisible(this.player.hasStar());
-      if (this.player.hasStar()) {
-        this.starGlow.setPosition(Math.round(this.player.x), Math.round(this.player.y - 12));
+      if (this.lavaGlowRect) {
+        this.lavaGlowRect.setAlpha(0.18 + Math.sin(this.time.now * 0.006) * 0.05);
       }
-    }
-
-    // Cave / Castle darkness overlay with 80px soft cutout around Pip & lights
-    if (this.lightOverlayRt && this.lightCutoutBrush) {
-      this.lightOverlayRt.clear();
-      this.lightOverlayRt.fill(0x060410, 0.35);
-      const pipScreenX = Math.round(this.player.x - cam.scrollX);
-      const pipScreenY = Math.round(this.player.y - 12 - cam.scrollY);
-      this.lightCutoutBrush.setScale(1);
-      this.lightOverlayRt.erase(this.lightCutoutBrush, pipScreenX, pipScreenY);
-      for (const ls of this.staticLightSources) {
-        if (ls.x >= camLeft - 80 && ls.x <= camRight + 80) {
-          this.lightCutoutBrush.setScale(0.65);
-          this.lightOverlayRt.erase(this.lightCutoutBrush, Math.round(ls.x - cam.scrollX), Math.round(ls.y));
+      if (this.starGlow) {
+        this.starGlow.setVisible(this.player.hasStar());
+        if (this.player.hasStar()) {
+          this.starGlow.setPosition(Math.round(this.player.x), Math.round(this.player.y - 12));
         }
       }
+      if (this.lightOverlayRt && this.lightCutoutBrush) {
+        this.lightOverlayRt.clear();
+        this.lightOverlayRt.fill(0x060410, 0.35);
+        const pipScreenX = Math.round(this.player.x - cam.scrollX);
+        const pipScreenY = Math.round(this.player.y - 12 - cam.scrollY);
+        this.lightCutoutBrush.setScale(1);
+        this.lightOverlayRt.erase(this.lightCutoutBrush, pipScreenX, pipScreenY);
+        for (const ls of this.staticLightSources) {
+          if (ls.x >= camLeft - 80 && ls.x <= camRight + 80) {
+            this.lightCutoutBrush.setScale(0.65);
+            this.lightOverlayRt.erase(
+              this.lightCutoutBrush,
+              Math.round(ls.x - cam.scrollX),
+              Math.round(ls.y),
+            );
+          }
+        }
+      }
+    } else if (this.starGlow) {
+      this.starGlow.setVisible(false);
     }
 
     this.effects.update(dtMs);
-    this.player.recordPrevBottom();
 
-    if (this.debugText) {
-      const fps = Math.round(this.game.loop.actualFps);
-      this.debugText.setText(
-        `FPS:${fps} X:${Math.round(this.player.x)} Y:${Math.round(this.player.y)} ${this.player.powerState}${this.player.isGodMode() ? ' GOD' : ''}`,
-      );
+    // Auto FPS performance monitor (downgrade to low if avg FPS < 50 for 3 consecutive seconds)
+    const session = getSession();
+    if (this.runtimeHighEffects && session.saveData.settings.effectQuality === 'auto') {
+      const fps = this.game.loop.actualFps;
+      if (fps > 0 && fps < 50) {
+        this.lowFpsAccumMs += dtMs;
+        this.fpsSamples.push(fps);
+        if (this.lowFpsAccumMs >= 3000) {
+          const avg = this.fpsSamples.reduce((a, b) => a + b, 0) / this.fpsSamples.length;
+          if (avg < 50) {
+            this.downgradeEffectsForMobilePerformance();
+          }
+        }
+      } else {
+        this.lowFpsAccumMs = 0;
+        this.fpsSamples = [];
+      }
     }
+
+    if (isDebugEnabled()) {
+      if (this.debugText) {
+        const fps = Math.round(this.game.loop.actualFps);
+        this.debugText.setText(
+          `FPS:${fps} W:${this.scale.width} X:${Math.round(this.player.x)} Y:${Math.round(this.player.y)} ${this.player.powerState}${this.player.isGodMode() ? ' GOD' : ''}`,
+        );
+      }
+      if (typeof window !== 'undefined') {
+        (window as unknown as Record<string, unknown>).__PIXEL_HERO_DEBUG__ = {
+          scene: 'GameScene',
+          playerX: this.player.x,
+          playerY: this.player.y,
+          playerVy: this.player.getArcadeBody().velocity.y,
+          powerState: this.player.powerState,
+          logicalWidth: this.scale.width,
+          logicalHeight: this.scale.height,
+        };
+      }
+    }
+  }
+
+  override update(_time: number, delta: number): void {
+    const clampedDelta = Math.min(delta, 50);
+    this.stepAccumulatorMs += clampedDelta;
+    let steps = 0;
+    while (this.stepAccumulatorMs >= FIXED_DT_MS && steps < 4) {
+      this.stepAccumulatorMs -= FIXED_DT_MS;
+      this.fixedStep(FIXED_DT_MS);
+      steps++;
+    }
+    this.renderEffectsAndLighting(clampedDelta);
   }
 }

@@ -75,7 +75,20 @@ describe('SaveManager', () => {
       version: 1,
       unlockedLevel: 3,
       highScore: 42500,
-      settings: { sfx: 40, music: 70, touch: true, shake: false, highEffects: true },
+      settings: {
+        sfx: 40,
+        music: 70,
+        touch: true,
+        shake: false,
+        highEffects: true,
+        effectQuality: 'high',
+        touchSize: 'large',
+        touchAlpha: 65,
+        touchLeftHanded: true,
+        touchMoveMode: 'joystick',
+        alwaysRun: true,
+        vibrate: false,
+      },
       playerName: 'PipHero',
     });
 
@@ -88,6 +101,13 @@ describe('SaveManager', () => {
       touch: true,
       shake: false,
       highEffects: true,
+      effectQuality: 'high',
+      touchSize: 'large',
+      touchAlpha: 65,
+      touchLeftHanded: true,
+      touchMoveMode: 'joystick',
+      alwaysRun: true,
+      vibrate: false,
     });
     expect(loaded.playerName).toBe('PipHero');
   });

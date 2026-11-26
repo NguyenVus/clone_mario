@@ -8,6 +8,18 @@ export class Synth {
   private sfxVol = 0.8;
   private musicVol = 0.6;
   private muted = false;
+  private lifecycleBound = false;
+
+  public bindMobileAudioLifecycle(): void {
+    if (this.lifecycleBound || typeof window === 'undefined') return;
+    this.lifecycleBound = true;
+
+    const resumeHandler = (): void => {
+      this.unlock();
+    };
+    window.addEventListener('touchend', resumeHandler, { passive: true });
+    window.addEventListener('pointerup', resumeHandler, { passive: true });
+  }
 
   public unlock(): AudioContext | null {
     if (typeof window === 'undefined') return null;
@@ -28,8 +40,9 @@ export class Synth {
       this.noiseBuffer = this.createNoiseBuffer(this.ctx);
       this.applyGains();
     }
-    if (this.ctx.state === 'suspended') {
-      void this.ctx.resume();
+    const state = this.ctx.state as string;
+    if (state === 'suspended' || state === 'interrupted') {
+      void this.ctx.resume().catch(() => {});
     }
     return this.ctx;
   }
@@ -91,6 +104,9 @@ export class Synth {
   ): void {
     const ctx = this.ctx;
     if (!ctx || !this.sfxGain || this.muted || this.sfxVol <= 0) return;
+    if (ctx.state !== 'running') {
+      void ctx.resume().catch(() => {});
+    }
 
     const t0 = ctx.currentTime + delaySec;
     const t1 = t0 + durationSec;
@@ -147,8 +163,8 @@ export class Synth {
   }
 
   public gem(): void {
-    this.playTone('square', 987.77, 987.77, 0.06, 0, 0.4); // B5
-    this.playTone('square', 1318.51, 1318.51, 0.11, 0.055, 0.45); // E6
+    this.playTone('square', 987.77, 987.77, 0.06, 0, 0.4);
+    this.playTone('square', 1318.51, 1318.51, 0.11, 0.055, 0.45);
   }
 
   public stomp(): void {

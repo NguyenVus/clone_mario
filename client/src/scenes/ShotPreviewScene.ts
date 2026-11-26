@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { EXTRA_TILE_INDEX, getGroundTileIndex } from '../art/autotile';
-import { GAME_HEIGHT, GAME_WIDTH, getShotTheme, TILE_SIZE } from '../config';
+import { DEFAULT_GAME_WIDTH, GAME_HEIGHT, getShotTheme, TILE_SIZE } from '../config';
 import type { LevelTheme } from '../levels/legend';
 
 /**
@@ -24,30 +24,31 @@ export class ShotPreviewScene extends Phaser.Scene {
   }
 
   private buildDiorama(theme: LevelTheme): void {
+    const viewW = this.scale.width || DEFAULT_GAME_WIDTH;
     // Multi-layer parallax
     if (theme === 'grass') {
-      this.add.tileSprite(0, 0, GAME_WIDTH, GAME_HEIGHT, 'bg-grass-sky').setOrigin(0, 0).setDepth(0);
+      this.add.tileSprite(0, 0, viewW, GAME_HEIGHT, 'bg-grass-sky').setOrigin(0, 0).setDepth(0);
       this.add
-        .tileSprite(0, GAME_HEIGHT - 138, GAME_WIDTH, 120, 'bg-grass-mountains')
+        .tileSprite(0, GAME_HEIGHT - 138, viewW, 120, 'bg-grass-mountains')
         .setOrigin(0, 0)
         .setDepth(1);
       this.add
-        .tileSprite(0, GAME_HEIGHT - 102, GAME_WIDTH, 80, 'bg-grass-hills')
+        .tileSprite(0, GAME_HEIGHT - 102, viewW, 80, 'bg-grass-hills')
         .setOrigin(0, 0)
         .setDepth(2);
-      this.add.tileSprite(0, 14, GAME_WIDTH, 64, 'bg-grass-clouds').setOrigin(0, 0).setDepth(3);
+      this.add.tileSprite(0, 14, viewW, 64, 'bg-grass-clouds').setOrigin(0, 0).setDepth(3);
     } else if (theme === 'cave') {
-      this.add.tileSprite(0, 0, GAME_WIDTH, GAME_HEIGHT, 'bg-cave-sky').setOrigin(0, 0).setDepth(0);
-      this.add.tileSprite(0, 0, GAME_WIDTH, GAME_HEIGHT, 'bg-cave-rocks').setOrigin(0, 0).setDepth(1);
+      this.add.tileSprite(0, 0, viewW, GAME_HEIGHT, 'bg-cave-sky').setOrigin(0, 0).setDepth(0);
+      this.add.tileSprite(0, 0, viewW, GAME_HEIGHT, 'bg-cave-rocks').setOrigin(0, 0).setDepth(1);
       this.add
-        .tileSprite(0, 0, GAME_WIDTH, GAME_HEIGHT, 'bg-cave-crystals')
+        .tileSprite(0, 0, viewW, GAME_HEIGHT, 'bg-cave-crystals')
         .setOrigin(0, 0)
         .setDepth(2);
     } else {
-      this.add.tileSprite(0, 0, GAME_WIDTH, GAME_HEIGHT, 'bg-castle-sky').setOrigin(0, 0).setDepth(0);
-      this.add.tileSprite(0, 0, GAME_WIDTH, GAME_HEIGHT, 'bg-castle-wall').setOrigin(0, 0).setDepth(1);
+      this.add.tileSprite(0, 0, viewW, GAME_HEIGHT, 'bg-castle-sky').setOrigin(0, 0).setDepth(0);
+      this.add.tileSprite(0, 0, viewW, GAME_HEIGHT, 'bg-castle-wall').setOrigin(0, 0).setDepth(1);
       this.add
-        .tileSprite(0, 0, GAME_WIDTH, GAME_HEIGHT, 'bg-castle-pillars')
+        .tileSprite(0, 0, viewW, GAME_HEIGHT, 'bg-castle-pillars')
         .setOrigin(0, 0)
         .setDepth(2);
     }
@@ -176,7 +177,7 @@ export class ShotPreviewScene extends Phaser.Scene {
 
     // Cave/Castle darkness cutout around Pip
     if (theme === 'cave' || theme === 'castle') {
-      const darkRt = this.add.renderTexture(0, 0, GAME_WIDTH, GAME_HEIGHT).setOrigin(0, 0).setDepth(20);
+      const darkRt = this.add.renderTexture(0, 0, viewW, GAME_HEIGHT).setOrigin(0, 0).setDepth(20);
       darkRt.fill(0x060410, 0.35);
       const cutout = this.make.image({ x: 0, y: 0, key: 'light-cutout', add: false });
       darkRt.erase(cutout, pipX, pipY - 14);

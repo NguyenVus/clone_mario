@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { isCoarsePointerDevice } from '../systems/viewport';
 
 export class BootScene extends Phaser.Scene {
   constructor() {
@@ -6,11 +7,11 @@ export class BootScene extends Phaser.Scene {
   }
 
   create(): void {
-    const isTouch = this.sys.game.device.input.touch;
+    const isTouch = this.sys.game.device.input.touch || isCoarsePointerDevice();
     this.registry.set('isTouchDevice', isTouch);
 
-    if (isTouch && this.input.manager.pointersTotal < 4) {
-      this.input.addPointer(3);
+    if (isTouch && this.input.manager.pointersTotal < 5) {
+      this.input.addPointer(4);
     }
 
     this.scene.start('PreloadScene');

@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "prebuild": "node scripts/generate-icons.mjs",
     "build": "tsc -p tsconfig.json && vite build",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
@@ -13,6 +14,7 @@
     "phaser": "^3.88.2"
   },
   "devDependencies": {
-    "vite": "^6.2.6"
+    "vite": "^6.2.6",
+    "vite-plugin-pwa": "^1.0.0"
   }
 }

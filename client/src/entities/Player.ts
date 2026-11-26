@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
-import { GAMEPLAY_CONFIG, PHYSICS_CONFIG } from '../config';
+import { FIXED_DT_SEC, GAMEPLAY_CONFIG, PHYSICS_CONFIG } from '../config';
 import type { InputState } from '../systems/InputManager';
+import { stepPlayerVertical, type VerticalState } from './jumpPhysics';
 import {
   nextPowerState,
   type PowerEvent,
@@ -19,8 +20,17 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
   public starTimerMs = 0;
   public prevBottom = 0;
 
-  private coyoteTimerMs = 0;
-  private jumpBufferTimerMs = 0;
+  private verticalState: VerticalState = {
+    y: 0,
+    vy: 0,
+    vx: 0,
+    onGround: false,
+    coyoteTimerMs: 0,
+    jumpBufferTimerMs: 0,
+    jumpElapsedMs: 0,
+    isJumping: false,
+  };
+
   private invulnTimerMs = 0;
   private flashTimerMs = 0;
   private starCycleMs = 0;
@@ -37,8 +47,8 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
   private controlLocked = false;
   private debugGodMode = false;
   private victoryMode = false;
+  private alwaysRun = false;
 
-  // Secondary spring motion for Pip's antenna glow orb
   private antennaLagX = 0;
   private readonly antennaOrb: Phaser.GameObjects.Arc;
 
@@ -46,6 +56,7 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
   private onEmitStarTrail?: (x: number, y: number) => void;
   private onLandHard?: (x: number, y: number) => void;
   private onJumpSound?: (isBig: boolean) => void;
+  private onJumpTrigger?: () => void;
   private onFireball?: (x: number, y: number, dir: 1 | -1) => boolean;
 
   constructor(scene: Phaser.Scene, x: number, y: number, initialState: PowerState = 'small') {
@@ -64,12 +75,13 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     this.setOrigin(0.5, 1);
     this.setDepth(10);
 
-    // Subtle antenna glowing LED orb with velocity spring lag
     this.antennaOrb = scene.add.circle(x, y - 16, 1.5, 0xa8ffb8, 0.9).setDepth(11);
 
     const body = this.getArcadeBody();
-    body.setGravityY(PHYSICS_CONFIG.GRAVITY);
-    body.setMaxVelocityY(PHYSICS_CONFIG.MAX_FALL_SPEED);
+    // Turn off Arcade's built-in gravity so our asymmetric 60Hz gravity never conflicts or clips upward vy
+    body.setAllowGravity(false);
+    body.setGravityY(0);
+    body.setMaxVelocityY(2000);
     this.applyHitbox(false);
     this.prevBottom = body.bottom;
 
@@ -82,17 +94,23 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     return this.body as Phaser.Physics.Arcade.Body;
   }
 
+  public setAlwaysRun(enabled: boolean): void {
+    this.alwaysRun = enabled;
+  }
+
   public setCallbacks(callbacks: {
     onEmitDust?: (x: number, y: number) => void;
     onEmitStarTrail?: (x: number, y: number) => void;
     onLandHard?: (x: number, y: number) => void;
     onJumpSound?: (isBig: boolean) => void;
+    onJumpTrigger?: () => void;
     onFireball?: (x: number, y: number, dir: 1 | -1) => boolean;
   }): void {
     this.onEmitDust = callbacks.onEmitDust;
     this.onEmitStarTrail = callbacks.onEmitStarTrail;
     this.onLandHard = callbacks.onLandHard;
     this.onJumpSound = callbacks.onJumpSound;
+    this.onJumpTrigger = callbacks.onJumpTrigger;
     this.onFireball = callbacks.onFireball;
   }
 
@@ -165,7 +183,10 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     this.y = prevBottom;
   }
 
-  public updatePlayer(
+  /**
+   * Fixed 60Hz physics & input step.
+   */
+  public fixedUpdatePlayer(
     dtMs: number,
     input: InputState,
     cameraLeftX: number,
@@ -193,7 +214,6 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
 
     if (this.landPoseMs > 0) this.landPoseMs = Math.max(0, this.landPoseMs - dtMs);
 
-    // Random blink every 2..5s
     if (this.blinkActiveMs > 0) {
       this.blinkActiveMs = Math.max(0, this.blinkActiveMs - dtMs);
     } else {
@@ -247,8 +267,9 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
       this.applyHitbox(this.isCrouching);
     }
 
+    const isRunning = this.alwaysRun || input.runHeld;
     const accelMult = onGround ? 1 : PHYSICS_CONFIG.AIR_ACCEL_MULT;
-    const maxSpeed = input.run ? PHYSICS_CONFIG.RUN_MAX_SPEED : PHYSICS_CONFIG.WALK_MAX_SPEED;
+    const maxSpeed = isRunning ? PHYSICS_CONFIG.RUN_MAX_SPEED : PHYSICS_CONFIG.WALK_MAX_SPEED;
     const targetDir = this.isCrouching ? 0 : input.left ? -1 : input.right ? 1 : 0;
 
     let vx = body.velocity.x;
@@ -266,7 +287,7 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
           vx = targetDir * 15;
         }
       } else {
-        const accel = (input.run ? PHYSICS_CONFIG.RUN_ACCEL : PHYSICS_CONFIG.GROUND_ACCEL) * accelMult;
+        const accel = (isRunning ? PHYSICS_CONFIG.RUN_ACCEL : PHYSICS_CONFIG.GROUND_ACCEL) * accelMult;
         vx += targetDir * accel * dt;
         if (Math.abs(vx) > maxSpeed) {
           vx -= Math.sign(vx) * PHYSICS_CONFIG.GROUND_DECEL * dt;
@@ -284,30 +305,23 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
 
     body.setVelocityX(vx);
 
-    if (onGround) {
-      this.coyoteTimerMs = PHYSICS_CONFIG.COYOTE_TIME_MS;
-    } else {
-      this.coyoteTimerMs = Math.max(0, this.coyoteTimerMs - dtMs);
-    }
+    // Sync vertical state with body before stepping asymmetric gravity
+    this.verticalState.y = this.y;
+    this.verticalState.vy = body.velocity.y;
+    this.verticalState.vx = vx;
+    this.verticalState.onGround = onGround;
 
-    if (input.jumpPressed) {
-      this.jumpBufferTimerMs = PHYSICS_CONFIG.JUMP_BUFFER_MS;
-    } else {
-      this.jumpBufferTimerMs = Math.max(0, this.jumpBufferTimerMs - dtMs);
-    }
+    const vRes = stepPlayerVertical(
+      this.verticalState,
+      { jumpHeld: input.jumpHeld, jumpPressed: input.jumpPressed },
+      FIXED_DT_SEC,
+    );
+    body.setVelocityY(this.verticalState.vy);
 
-    if (this.jumpBufferTimerMs > 0 && this.coyoteTimerMs > 0) {
-      const isFast = Math.abs(vx) > PHYSICS_CONFIG.RUN_JUMP_SPEED_THRESHOLD;
-      const jumpVel = isFast ? PHYSICS_CONFIG.RUN_JUMP_VELOCITY : PHYSICS_CONFIG.JUMP_VELOCITY;
-      body.setVelocityY(jumpVel);
-      this.coyoteTimerMs = 0;
-      this.jumpBufferTimerMs = 0;
+    if (vRes.jumped) {
       this.playSquash(0.9, 1.1);
       this.onJumpSound?.(this.powerState !== 'small');
-    }
-
-    if (!input.jump && body.velocity.y < PHYSICS_CONFIG.JUMP_CUT_VY_THRESHOLD) {
-      body.setVelocityY(body.velocity.y * PHYSICS_CONFIG.JUMP_CUT_MULT);
+      this.onJumpTrigger?.();
     }
 
     if (
@@ -352,6 +366,14 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     this.updateTextureVisual(vx, body.velocity.y, onGround, isSkidding);
     this.updateAntennaOrb(dt, vx);
     this.wasOnGround = onGround;
+  }
+
+  public applyStompBounce(jumpHeld: boolean): void {
+    const vy = jumpHeld ? PHYSICS_CONFIG.STOMP_BOUNCE_HOLD : PHYSICS_CONFIG.STOMP_BOUNCE;
+    this.getArcadeBody().setVelocityY(vy);
+    this.verticalState.vy = vy;
+    this.verticalState.isJumping = true;
+    this.verticalState.jumpElapsedMs = 0;
   }
 
   private updateAntennaOrb(dt: number, vx: number): void {

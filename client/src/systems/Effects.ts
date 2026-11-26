@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { GAME_HEIGHT, GAME_WIDTH } from '../config';
+import { DEFAULT_GAME_WIDTH, GAME_HEIGHT } from '../config';
 import { ObjectPool } from './Pool';
 
 interface PooledSprite extends Phaser.GameObjects.Image {
@@ -16,6 +16,7 @@ export class EffectsSystem {
   private readonly scoreTextPool: ObjectPool<Phaser.GameObjects.BitmapText>;
   private readonly popupGemPool: ObjectPool<Phaser.GameObjects.Sprite>;
   private shakeEnabled = true;
+  private lowParticleMode = false;
 
   private irisRt: Phaser.GameObjects.RenderTexture | null = null;
   private irisDisc: Phaser.GameObjects.Image | null = null;
@@ -62,20 +63,29 @@ export class EffectsSystem {
     this.shakeEnabled = enabled;
   }
 
+  public setLowParticleMode(low: boolean): void {
+    this.lowParticleMode = low;
+  }
+
   public shake(durationMs: number, intensity: number): void {
     if (!this.shakeEnabled) return;
     this.scene.cameras.main.shake(durationMs, intensity);
   }
 
-  public playIrisOpen(screenX = GAME_WIDTH / 2, screenY = GAME_HEIGHT / 2, durationMs = 420): void {
+  public playIrisOpen(
+    screenX = this.scene.scale.width / 2,
+    screenY = GAME_HEIGHT / 2,
+    durationMs = 420,
+  ): void {
     this.ensureIris();
     if (!this.irisRt || !this.irisDisc) return;
 
     this.irisRt.setVisible(true);
+    const maxR = Math.hypot(this.scene.scale.width, GAME_HEIGHT);
     const state = { radius: 4 };
     this.scene.tweens.add({
       targets: state,
-      radius: 260,
+      radius: maxR,
       duration: durationMs,
       ease: 'Cubic.easeOut',
       onUpdate: () => this.drawIrisFrame(screenX, screenY, state.radius),
@@ -87,7 +97,7 @@ export class EffectsSystem {
   }
 
   public playIrisClose(
-    screenX = GAME_WIDTH / 2,
+    screenX = this.scene.scale.width / 2,
     screenY = GAME_HEIGHT / 2,
     durationMs = 450,
     onComplete?: () => void,
@@ -99,7 +109,7 @@ export class EffectsSystem {
     }
 
     this.irisRt.setVisible(true);
-    const state = { radius: 260 };
+    const state = { radius: Math.hypot(this.scene.scale.width, GAME_HEIGHT) };
     this.scene.tweens.add({
       targets: state,
       radius: 0,
@@ -114,13 +124,16 @@ export class EffectsSystem {
   }
 
   private ensureIris(): void {
+    const w = this.scene.scale.width || DEFAULT_GAME_WIDTH;
     if (!this.irisRt) {
       this.irisRt = this.scene.add
-        .renderTexture(0, 0, GAME_WIDTH, GAME_HEIGHT)
+        .renderTexture(0, 0, w, GAME_HEIGHT)
         .setOrigin(0, 0)
         .setScrollFactor(0)
         .setDepth(200)
         .setVisible(false);
+    } else if (this.irisRt.width !== w) {
+      this.irisRt.resize(w, GAME_HEIGHT);
     }
     if (!this.irisDisc) {
       this.irisDisc = this.scene.make.image({ x: 0, y: 0, key: 'iris-disc', add: false });
@@ -156,7 +169,8 @@ export class EffectsSystem {
 
   public emitGemSparkle(x: number, y: number): void {
     const colors = [0xfff8a0, 0xf8c420, 0xffffff];
-    for (let i = 0; i < 8; i++) {
+    const total = this.lowParticleMode ? 4 : 8;
+    for (let i = 0; i < total; i++) {
       const p = this.particlePool.acquire();
       p.setTexture('particle', 0);
       p.setTint(colors[i % colors.length]!);
@@ -262,7 +276,8 @@ export class EffectsSystem {
   }
 
   public emitBurst(x: number, y: number, color: number, count = 12): void {
-    for (let i = 0; i < count; i++) {
+    const total = this.lowParticleMode ? Math.max(4, Math.floor(count / 2)) : count;
+    for (let i = 0; i < total; i++) {
       const p = this.particlePool.acquire();
       p.setTexture('particle', 0);
       p.setTint(color);
